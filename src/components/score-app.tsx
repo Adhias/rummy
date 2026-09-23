@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { aheadPlayerIds, formatRupees } from "@/lib/scoring";
+import { aheadPlayerIds, formatDollars } from "@/lib/scoring";
 import type { Game, SessionDetail, SessionSummary } from "@/lib/types";
 
 function formatWhen(iso: string) {
@@ -28,7 +28,7 @@ function formatWhen(iso: string) {
 function summaryFrom(session: SessionDetail): SessionSummary {
   return {
     id: session.id,
-    rupeeValue: session.rupeeValue,
+    pointValue: session.pointValue,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     gameCount: session.games.length,
@@ -107,7 +107,7 @@ export function ScoreApp({
           <h1 className="font-heading text-3xl leading-none">Points Rummy</h1>
           <p className="mt-1 text-sm text-[#d7c7a4]">
             {session && mode !== "setup"
-              ? `${formatRupees(session.rupeeValue)} a point`
+              ? `${formatDollars(session.pointValue)} a point`
               : "One sheet for the table"}
           </p>
         </div>
@@ -198,7 +198,7 @@ export function ScoreApp({
                     </span>
                     <span className="mt-1 block text-sm text-[#5e584e]">
                       {formatWhen(item.updatedAt)} · {item.gameCount}{" "}
-                      {item.gameCount === 1 ? "game" : "games"} · {formatRupees(item.rupeeValue)} a
+                      {item.gameCount === 1 ? "game" : "games"} · {formatDollars(item.pointValue)} a
                       point
                     </span>
                     <span className="mt-1 block text-sm">{aheadLabel(item.players, item.gameCount)}</span>
@@ -216,7 +216,7 @@ export function ScoreApp({
             <DialogTitle>Start a new session?</DialogTitle>
             <DialogDescription>
               This sheet stays in the list. The new one starts empty, with its own players and
-              rupee value.
+              dollar value.
             </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-2">

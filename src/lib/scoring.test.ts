@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   cardPoints,
   countHand,
+  DEFAULT_POINT_VALUE,
+  formatDollars,
   gameMoney,
   opponentPoints,
   roundLoserPoints,
@@ -71,7 +73,7 @@ describe("winner points and money", () => {
     expect(stored[0]).toEqual({ playerId: "anu", points: -100 });
   });
 
-  test("computes rupees from stored opponent points, not the winner field", () => {
+  test("computes dollars from stored opponent points, not the winner field", () => {
     const stored = storeGameScores(players, "anu", [
       { playerId: "anu", points: -5 },
       { playerId: "bo", points: 20 },
@@ -82,6 +84,9 @@ describe("winner points and money", () => {
     expect(gameMoney(opponents, 1)).toBe(90);
     expect(gameMoney(opponents, 2)).toBe(180);
     expect(gameMoney(opponents, 0.5)).toBe(45);
+    expect(gameMoney(opponents, DEFAULT_POINT_VALUE)).toBe(9);
+    expect(formatDollars(DEFAULT_POINT_VALUE)).toBe("$0.10");
+    expect(formatDollars(9)).toBe("$9.00");
   });
 });
 
