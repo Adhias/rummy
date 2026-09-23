@@ -4,8 +4,23 @@ import Database from "better-sqlite3";
 
 const globalForDb = globalThis as unknown as { rummyDb?: Database.Database };
 
+const serviceDatabase = "/var/lib/points-rummy/rummy.sqlite";
+
+type DatabaseEnv = Record<string, string | undefined>;
+
+export function resolveDatabasePath(env: DatabaseEnv, cwd: string): string {
+  const configured = env["RUMMY_DB_PATH"];
+  if (configured) return configured;
+  const stateDirectory = env["STATE_DIRECTORY"]?.split(":")[0];
+  if (stateDirectory) return path.join(stateDirectory, "rummy.sqlite");
+  // The standalone server chdirs into its install directory. A Nix package
+  // lives in the store, which cannot hold the SQLite file.
+  if (cwd === "/nix/store" || cwd.startsWith("/nix/store/")) return serviceDatabase;
+  return path.join(cwd, "data", "rummy.sqlite");
+}
+
 function databasePath(): string {
-  return process.env.RUMMY_DB_PATH ?? path.join(process.cwd(), "data", "rummy.sqlite");
+  return resolveDatabasePath(process.env, process.cwd());
 }
 
 function migrate(db: Database.Database) {

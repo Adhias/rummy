@@ -60,7 +60,8 @@
               rm -rf $out/share/points-rummy/node_modules/sharp $out/share/points-rummy/node_modules/@img
 
               makeWrapper ${nodejs}/bin/node $out/bin/points-rummy \
-                --add-flags $out/share/points-rummy/server.js
+                --add-flags $out/share/points-rummy/server.js \
+                --set-default RUMMY_DB_PATH /var/lib/points-rummy/rummy.sqlite
 
               runHook postInstall
             '';
