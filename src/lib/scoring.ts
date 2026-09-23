@@ -4,6 +4,7 @@ export const PACK_POINTS = 20;
 export const DOUBLE_PACK_POINTS = 40;
 export const FULL_COUNT_POINTS = 80;
 export const LOSER_CAP = 80;
+export const DEFAULT_POINT_VALUE = 0.1;
 
 export const CARD_RANKS = [
   "A",
@@ -83,8 +84,8 @@ export function opponentPoints(scores: GameScore[], winnerPlayerId: string): num
     .map((score) => score.points);
 }
 
-export function gameMoney(points: number[], rupeeValue: number): number {
-  const raw = points.reduce((sum, value) => sum + value, 0) * rupeeValue;
+export function gameMoney(points: number[], pointValue: number): number {
+  const raw = points.reduce((sum, value) => sum + value, 0) * pointValue;
   return Math.round(raw * 100) / 100;
 }
 
@@ -126,11 +127,11 @@ export function formatPoints(points: number): string {
   return text.replace("-", "−");
 }
 
-export function formatRupees(amount: number): string {
-  return new Intl.NumberFormat("en-IN", {
+export function formatDollars(amount: number): string {
+  return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "INR",
-    minimumFractionDigits: 0,
+    currency: "USD",
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
 }

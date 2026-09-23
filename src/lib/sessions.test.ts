@@ -1,8 +1,10 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { resetDb } from "@/lib/db";
+import { DEFAULT_POINT_VALUE } from "@/lib/scoring";
 import {
   addGame,
   createSession,
@@ -32,7 +34,7 @@ function playerId(name: string, sessionId: string) {
 
 test("a pack and an 80-point hand update totals, and 66 is stored as 70", () => {
   const created = createSession({
-    rupeeValue: 1,
+    pointValue: 1,
     players: ["Anu", "Bo", "Chitra"],
   });
   const anu = playerId("Anu", created.id);
@@ -58,8 +60,8 @@ test("a pack and an 80-point hand update totals, and 66 is stored as 70", () => 
   expect(session.players.map((player) => player.total)).toEqual([-90, 20, 70]);
 });
 
-test("a typed winner value is saved, and rupees still use the opponents", () => {
-  const created = createSession({ rupeeValue: 2, players: ["Anu", "Bo", "Chitra"] });
+test("a typed winner value is saved, and dollars still use the opponents", () => {
+  const created = createSession({ pointValue: 2, players: ["Anu", "Bo", "Chitra"] });
   const anu = playerId("Anu", created.id);
   const bo = playerId("Bo", created.id);
   const chitra = playerId("Chitra", created.id);
@@ -79,7 +81,7 @@ test("a typed winner value is saved, and rupees still use the opponents", () => 
 });
 
 test("editing and deleting a game recompute the sheet", () => {
-  const created = createSession({ rupeeValue: 1, players: ["Anu", "Bo"] });
+  const created = createSession({ pointValue: 1, players: ["Anu", "Bo"] });
   const anu = playerId("Anu", created.id);
   const bo = playerId("Bo", created.id);
 
@@ -121,7 +123,7 @@ test("editing and deleting a game recompute the sheet", () => {
 });
 
 test("closing and reopening the database keeps the session, and older sessions stay listed", () => {
-  const first = createSession({ rupeeValue: 1, players: ["Anu", "Bo"] });
+  const first = createSession({ pointValue: 1, players: ["Anu", "Bo"] });
   const anu = playerId("Anu", first.id);
   const bo = playerId("Bo", first.id);
   addGame(first.id, {
@@ -137,7 +139,7 @@ test("closing and reopening the database keeps the session, and older sessions s
   expect(reloaded?.games).toHaveLength(1);
   expect(reloaded?.players.find((player) => player.name === "Bo")?.total).toBe(20);
 
-  const second = createSession({ rupeeValue: 5, players: ["Dev", "Ela"] });
+  const second = createSession({ pointValue: 5, players: ["Dev", "Ela"] });
   const listed = listSessions();
   expect(listed.map((session) => session.id)).toEqual([second.id, first.id]);
   expect(getSession(first.id)?.games).toHaveLength(1);
@@ -147,14 +149,73 @@ test("closing and reopening the database keeps the session, and older sessions s
   expect(renamed.players[0].total).toBe(-20);
 });
 
+test("stores ten cents per point and settles the game in dollars", () => {
+  const created = createSession({
+    pointValue: DEFAULT_POINT_VALUE,
+    players: ["Anu", "Bo"],
+  });
+  expect(created.pointValue).toBe(0.1);
+
+  const anu = playerId("Anu", created.id);
+  const bo = playerId("Bo", created.id);
+  const session = addGame(created.id, {
+    winnerPlayerId: anu,
+    scores: [
+      { playerId: anu, points: -20 },
+      { playerId: bo, points: 20 },
+    ],
+  });
+  expect(session.games[0].money).toBe(2);
+  expect(getSession(created.id)?.pointValue).toBe(0.1);
+});
+
+test("an older rupee column is read as dollars per point", () => {
+  const file = process.env.RUMMY_DB_PATH;
+  if (!file) throw new Error("Missing database path");
+  const db = new Database(file);
+  db.exec(`
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      rupee_value REAL NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE players (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL
+    );
+    CREATE TABLE games (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      winner_player_id TEXT NOT NULL REFERENCES players(id),
+      position INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE game_scores (
+      game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      points REAL NOT NULL,
+      PRIMARY KEY (game_id, player_id)
+    );
+  `);
+  db.prepare(
+    `INSERT INTO sessions (id, rupee_value, created_at, updated_at) VALUES (?, ?, ?, ?)`,
+  ).run("old", 0.1, "2020-01-01T00:00:00.000Z", "2020-01-01T00:00:00.000Z");
+  db.close();
+
+  expect(getSession("old")?.pointValue).toBe(0.1);
+});
+
 test("rejects a session that is outside 2 to 6 named players", () => {
-  expect(() => createSession({ rupeeValue: 1, players: ["Anu"] })).toThrow(/2 to 6/);
+  expect(() => createSession({ pointValue: 1, players: ["Anu"] })).toThrow(/2 to 6/);
   expect(() =>
     createSession({
-      rupeeValue: 1,
+      pointValue: 1,
       players: ["A", "B", "C", "D", "E", "F", "G"],
     }),
   ).toThrow(/2 to 6/);
-  expect(() => createSession({ rupeeValue: 0, players: ["Anu", "Bo"] })).toThrow(/rupee/);
-  expect(() => createSession({ rupeeValue: 1, players: ["Anu", "  "] })).toThrow(/name/i);
+  expect(() => createSession({ pointValue: 0, players: ["Anu", "Bo"] })).toThrow(/dollar/);
+  expect(() => createSession({ pointValue: 1, players: ["Anu", "  "] })).toThrow(/name/i);
 });

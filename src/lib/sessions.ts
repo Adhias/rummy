@@ -10,7 +10,7 @@ import type { Game, GameInput, Player, SessionDetail, SessionSummary } from "@/l
 
 type SessionRow = {
   id: string;
-  rupee_value: number;
+  point_value: number;
   created_at: string;
   updated_at: string;
 };
@@ -34,12 +34,12 @@ type ScoreRow = {
   points: number;
 };
 
-function readRupeeValue(value: unknown): number {
-  const rupeeValue = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(rupeeValue) || rupeeValue <= 0 || rupeeValue > 1_000_000) {
-    throw new AppError("Set a rupee value greater than zero");
+function readPointValue(value: unknown): number {
+  const pointValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(pointValue) || pointValue <= 0 || pointValue > 1_000_000) {
+    throw new AppError("Set a dollar value greater than zero");
   }
-  return rupeeValue;
+  return pointValue;
 }
 
 function readNames(value: unknown): string[] {
@@ -73,7 +73,7 @@ function loadPlayers(sessionId: string): PlayerRow[] {
 export function getSession(id: string): SessionDetail | null {
   const db = getDb();
   const session = db
-    .prepare(`SELECT id, rupee_value, created_at, updated_at FROM sessions WHERE id = ?`)
+    .prepare(`SELECT id, point_value, created_at, updated_at FROM sessions WHERE id = ?`)
     .get(id) as SessionRow | undefined;
   if (!session) return null;
 
@@ -115,7 +115,7 @@ export function getSession(id: string): SessionDetail | null {
       winnerPlayerId: game.winner_player_id,
       createdAt: game.created_at,
       scores,
-      money: gameMoney(opponentPoints(scores, game.winner_player_id), session.rupee_value),
+      money: gameMoney(opponentPoints(scores, game.winner_player_id), session.point_value),
     };
   });
 
@@ -133,7 +133,7 @@ export function getSession(id: string): SessionDetail | null {
 
   return {
     id: session.id,
-    rupeeValue: session.rupee_value,
+    pointValue: session.point_value,
     createdAt: session.created_at,
     updatedAt: session.updated_at,
     players,
@@ -154,7 +154,7 @@ export function listSessions(): SessionSummary[] {
     return [
       {
         id: session.id,
-        rupeeValue: session.rupeeValue,
+        pointValue: session.pointValue,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
         gameCount: session.games.length,
@@ -168,17 +168,17 @@ export function listSessions(): SessionSummary[] {
   });
 }
 
-export function createSession(input: { rupeeValue: unknown; players: unknown }): SessionDetail {
+export function createSession(input: { pointValue: unknown; players: unknown }): SessionDetail {
   const names = readNames(input.players);
-  const rupeeValue = readRupeeValue(input.rupeeValue);
+  const pointValue = readPointValue(input.pointValue);
   const db = getDb();
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
   const insert = db.transaction(() => {
     db.prepare(
-      `INSERT INTO sessions (id, rupee_value, created_at, updated_at) VALUES (?, ?, ?, ?)`,
-    ).run(id, rupeeValue, now, now);
+      `INSERT INTO sessions (id, point_value, created_at, updated_at) VALUES (?, ?, ?, ?)`,
+    ).run(id, pointValue, now, now);
     const insertPlayer = db.prepare(
       `INSERT INTO players (id, session_id, name, position) VALUES (?, ?, ?, ?)`,
     );

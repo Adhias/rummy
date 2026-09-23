@@ -12,7 +12,7 @@ function migrate(db: Database.Database) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
-      rupee_value REAL NOT NULL,
+      point_value REAL NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -39,6 +39,12 @@ function migrate(db: Database.Database) {
       PRIMARY KEY (game_id, player_id)
     );
   `);
+
+  const columns = db.prepare(`PRAGMA table_info(sessions)`).all() as { name: string }[];
+  const names = new Set(columns.map((column) => column.name));
+  if (names.has("rupee_value") && !names.has("point_value")) {
+    db.exec(`ALTER TABLE sessions RENAME COLUMN rupee_value TO point_value`);
+  }
 }
 
 export function getDb(): Database.Database {
