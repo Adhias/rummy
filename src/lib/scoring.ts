@@ -83,8 +83,8 @@ export function opponentPoints(scores: GameScore[], winnerPlayerId: string): num
     .map((score) => score.points);
 }
 
-export function gameMoney(points: number[], rupeeValue: number): number {
-  const raw = points.reduce((sum, value) => sum + value, 0) * rupeeValue;
+export function gameMoney(points: number[], dollarValue: number): number {
+  const raw = points.reduce((sum, value) => sum + value, 0) * dollarValue;
   return Math.round(raw * 100) / 100;
 }
 
@@ -126,12 +126,10 @@ export function formatPoints(points: number): string {
   return text.replace("-", "−");
 }
 
-export function formatRupees(amount: number): string {
-  return new Intl.NumberFormat("en-IN", {
+export function formatDollars(amount: number): string {
+  return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "INR",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
+    currency: "USD",
   }).format(amount);
 }
 

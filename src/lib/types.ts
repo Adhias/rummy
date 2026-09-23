@@ -21,7 +21,7 @@ export type Game = {
 
 export type SessionDetail = {
   id: string;
-  rupeeValue: number;
+  dollarValue: number;
   createdAt: string;
   updatedAt: string;
   players: Player[];
@@ -30,7 +30,7 @@ export type SessionDetail = {
 
 export type SessionSummary = {
   id: string;
-  rupeeValue: number;
+  dollarValue: number;
   createdAt: string;
   updatedAt: string;
   gameCount: number;

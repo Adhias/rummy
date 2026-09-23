@@ -16,7 +16,7 @@ export function SessionSetup({
 }) {
   const [count, setCount] = useState(2);
   const [names, setNames] = useState(["", ""]);
-  const [rupeeValue, setRupeeValue] = useState("1");
+  const [dollarValue, setDollarValue] = useState("0.10");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -27,9 +27,9 @@ export function SessionSetup({
   }
 
   async function start() {
-    const value = Number(rupeeValue);
+    const value = Number(dollarValue);
     if (!Number.isFinite(value) || value <= 0) {
-      setError("Set a rupee value greater than zero");
+      setError("Set a dollar value greater than zero");
       return;
     }
     if (names.some((name) => name.trim() === "")) {
@@ -41,7 +41,7 @@ export function SessionSetup({
     try {
       const session = await requestJson<SessionDetail>("/api/sessions", {
         method: "POST",
-        body: JSON.stringify({ rupeeValue: value, players: names }),
+        body: JSON.stringify({ dollarValue: value, players: names }),
       });
       onCreated(session);
     } catch (caught) {
@@ -68,7 +68,7 @@ export function SessionSetup({
         )}
       </div>
       <p className="mb-5 text-base text-[#5e584e]">
-        Points Rummy. Set the rupee value of one point, then enter each game as you play. The
+        Points Rummy. Set the dollar value of one point, then enter each game as you play. The
         winner is paid the other players&apos; points times that value.
       </p>
 
@@ -121,12 +121,12 @@ export function SessionSetup({
       </div>
 
       <div className="mt-5">
-        <Label htmlFor="rupee-value">Rupees per point</Label>
+        <Label htmlFor="dollar-value">Dollars per point</Label>
         <Input
-          id="rupee-value"
+          id="dollar-value"
           inputMode="decimal"
-          value={rupeeValue}
-          onChange={(event) => setRupeeValue(event.target.value)}
+          value={dollarValue}
+          onChange={(event) => setDollarValue(event.target.value)}
           className="mt-1 h-12 text-base tabular-nums"
         />
       </div>

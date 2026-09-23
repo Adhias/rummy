@@ -19,9 +19,9 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { rupeeValue?: unknown; players?: unknown };
+    const body = (await request.json()) as { dollarValue?: unknown; players?: unknown };
     const session = createSession({
-      rupeeValue: body.rupeeValue,
+      dollarValue: body.dollarValue,
       players: body.players,
     });
     return Response.json(session, { status: 201 });
