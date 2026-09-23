@@ -15,24 +15,16 @@ This tracks Points Rummy only. It does not deal cards, and it does not score Poo
 
 ## Setup
 
-With Nix, enter a shell that has the Node.js version the package builds with:
-
-```bash
-nix develop
-npm ci
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000).
-
-`nix develop` provides Node.js 22, Python, pkg-config, and SQLite. `npm ci` installs the JavaScript dependencies into `node_modules` for local development. Sessions, players, and games are stored in SQLite at `data/rummy.sqlite`. Refreshing or coming back later keeps the sheet. Past sessions stay in the list.
-
-The same commands work without Nix, using whatever Node.js is already installed:
+Requires Node.js 22. Install the dependencies and start the dev server:
 
 ```bash
 npm install
 npm run dev
 ```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+Sessions, players, and games are stored in SQLite at `data/rummy.sqlite`. Refreshing or coming back later keeps the sheet. Past sessions stay in the list.
 
 ```bash
 npm test
@@ -40,41 +32,4 @@ npm run lint
 npm run build
 ```
 
-`nix build` produces the production server, and `nix run` starts it. It listens on port 3000. `RUMMY_DB_PATH` chooses the SQLite file.
-
-## NixOS
-
-This flake ships the package, not a service. `package.nix` is the derivation, `callPackage`d as `packages.points-rummy` and re-exported as `packages.default`. `flake.nix` also exports an overlay and a dev shell. The systemd unit, database path, reverse proxy, and TLS live in the NixOS configuration that consumes this flake.
-
-Add the flake as an input:
-
-```nix
-inputs.rummy.url = "github:Adhias/rummy";
-```
-
-Run the package under systemd from your own configuration. `points-rummy` reads `HOSTNAME`, `PORT`, and `RUMMY_DB_PATH`:
-
-```nix
-systemd.services.points-rummy = {
-  wantedBy = [ "multi-user.target" ];
-  after = [ "network.target" ];
-  environment = {
-    HOSTNAME = "127.0.0.1";
-    PORT = "3000";
-    RUMMY_DB_PATH = "/var/lib/points-rummy/rummy.sqlite";
-  };
-  serviceConfig = {
-    ExecStart = "${inputs.rummy.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/points-rummy";
-    StateDirectory = "points-rummy";
-    WorkingDirectory = "/var/lib/points-rummy";
-    DynamicUser = true;
-  };
-};
-```
-
-To install the package without a service, add the overlay:
-
-```nix
-nixpkgs.overlays = [ rummy.overlays.default ];
-environment.systemPackages = [ pkgs.points-rummy ];
-```
+`npm run build` produces the production server. It listens on `PORT` (default 3000), and `RUMMY_DB_PATH` chooses the SQLite file.
