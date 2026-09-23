@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { aheadPlayerIds, formatPoints, formatRupees } from "@/lib/scoring";
+import { aheadPlayerIds, formatPoints, formatDollars } from "@/lib/scoring";
 import type { Game, SessionDetail } from "@/lib/types";
 
 function pointsClass(points: number): string {
@@ -128,7 +128,7 @@ export function ScoreSheet({
                   <div className="mb-2 flex items-baseline justify-between gap-3">
                     <h3 className="font-heading text-xl">Game {index + 1}</h3>
                     <p className="text-sm font-medium">
-                      {winner?.name} is owed {formatRupees(game.money)}
+                      {winner?.name} is owed {formatDollars(game.money)}
                     </p>
                   </div>
                   <ul className="space-y-1">
@@ -172,7 +172,7 @@ export function ScoreSheet({
                       {player.name}
                     </th>
                   ))}
-                  <th className="px-2 py-2 font-medium">Rupees</th>
+                  <th className="px-2 py-2 font-medium">Dollars</th>
                   <th className="px-2 py-2 font-medium">
                     <span className="sr-only">Actions</span>
                   </th>
@@ -196,7 +196,7 @@ export function ScoreSheet({
                         </td>
                       );
                     })}
-                    <td className="px-2 py-3 whitespace-nowrap">{formatRupees(game.money)}</td>
+                    <td className="px-2 py-3 whitespace-nowrap">{formatDollars(game.money)}</td>
                     <td className="px-2 py-3">
                       <div className="flex justify-end gap-2">
                         <Button type="button" variant="outline" className="h-10" onClick={() => onEdit(game)}>

@@ -10,7 +10,7 @@ import {
   DOUBLE_PACK_POINTS,
   FULL_COUNT_POINTS,
   PACK_POINTS,
-  formatRupees,
+  formatDollars,
   gameMoney,
   parsePoints,
   roundLoserPoints,
@@ -111,7 +111,7 @@ export function GameEntry({
   const money =
     winnerId &&
     roundedLosers.length === session.players.filter((player) => player.id !== winnerId).length
-      ? gameMoney(roundedLosers, session.rupeeValue)
+      ? gameMoney(roundedLosers, session.dollarValue)
       : null;
   const winner = session.players.find((player) => player.id === winnerId) ?? null;
   const counterPlayer = session.players.find((player) => player.id === counterFor) ?? null;
@@ -295,7 +295,7 @@ export function GameEntry({
             )}
             {money !== null && (
               <p className="mt-2 text-base font-medium">
-                {winner.name} is owed {formatRupees(money)}
+                {winner.name} is owed {formatDollars(money)}
               </p>
             )}
           </div>
