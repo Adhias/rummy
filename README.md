@@ -1,6 +1,6 @@
 # Points Rummy
 
-A phone-friendly score sheet for Points Rummy. One person starts a session, sets the dollar value of one point, and enters their name. Everyone else joins with the code or link and adds their own name. Each phone enters its own points. The phone that started the session sets the winner and saves the hand.
+A phone-friendly score sheet for Points Rummy. One person starts a session, sets the dollar value of one point, and enters their name. Everyone else joins with the code or link and adds their own name. Each phone enters the points it lost, or declares itself the winner. The phone that started the session can override the winner's points and saves the hand.
 
 The sheet keeps a running total. The lowest total is ahead. A new session starts at $0.10 per point. The stake does not change after the session starts.
 

@@ -180,17 +180,16 @@ function joinMatches(session: SessionDetail, auth: DeviceAuth): boolean {
 function visibleOpenHand(role: PhoneRole, playerId: string | null, openHand: OpenHand): OpenHand {
   if (role === "admin") return openHand;
   if (role === "seat" && playerId) {
-    const won = openHand.winnerPlayerId === playerId;
     return {
-      scores: won ? [] : openHand.scores.filter((score) => score.playerId === playerId),
-      winnerPlayerId: won ? playerId : null,
+      scores: openHand.scores.filter((score) => score.playerId === playerId),
+      winnerPlayerId: openHand.winnerPlayerId,
       winnerPoints: null,
       winnerOverridden: false,
     };
   }
   return {
     scores: [],
-    winnerPlayerId: null,
+    winnerPlayerId: openHand.winnerPlayerId,
     winnerPoints: null,
     winnerOverridden: false,
   };
@@ -424,7 +423,12 @@ export function setSeatPoints(
     bump(sessionId, version);
     const openHand = loadOpenHand(sessionId);
     if (openHand.winnerPlayerId === seat.id) {
-      throw new AppError("The winner does not enter points");
+      db.prepare(
+          `UPDATE open_hands
+           SET winner_player_id = NULL, winner_points = NULL, winner_overridden = 0
+           WHERE session_id = ?`,
+        )
+        .run(sessionId);
     }
     db.prepare(
       `INSERT INTO open_hand_scores (session_id, player_id, points) VALUES (?, ?, ?)
@@ -454,27 +458,74 @@ function storeWinner(
     .run(sessionId, winnerPlayerId, winnerPoints, overridden);
 }
 
-export function setWinner(
+export function declareWinner(sessionId: string, auth: DeviceAuth, version: unknown): SessionView {
+  const session = mustGet(sessionId);
+  const seat = requireSeat(session, auth);
+  if (session.players.length < 2) {
+    throw new AppError("Scoring opens when a second player joins");
+  }
+  const expected = readVersion(version);
+  if (session.openHand.winnerPlayerId === seat.id && session.version === expected) {
+    return present(session, auth);
+  }
+  const db = getDb();
+
+  const write = db.transaction(() => {
+    bump(sessionId, expected);
+    const openHand = loadOpenHand(sessionId);
+    if (openHand.winnerPlayerId && openHand.winnerPlayerId !== seat.id) {
+      throw new AppError("Another seat already declared. They have to take it back.");
+    }
+    db.prepare(`DELETE FROM open_hand_scores WHERE session_id = ? AND player_id = ?`).run(sessionId, seat.id);
+    storeWinner(sessionId, seat.id, null);
+  });
+  write();
+
+  return present(mustGet(sessionId), auth);
+}
+
+export function retractWinner(sessionId: string, auth: DeviceAuth, version: unknown): SessionView {
+  const session = mustGet(sessionId);
+  const seat = requireSeat(session, auth);
+  const expected = readVersion(version);
+  const db = getDb();
+
+  const write = db.transaction(() => {
+    bump(sessionId, expected);
+    const openHand = loadOpenHand(sessionId);
+    if (openHand.winnerPlayerId !== seat.id) {
+      throw new AppError("You have not declared");
+    }
+    db.prepare(
+      `UPDATE open_hands
+       SET winner_player_id = NULL, winner_points = NULL, winner_overridden = 0
+       WHERE session_id = ?`,
+    ).run(sessionId);
+  });
+  write();
+
+  return present(mustGet(sessionId), auth);
+}
+
+export function setWinnerPoints(
   sessionId: string,
   auth: DeviceAuth,
-  input: { version: unknown; winnerPlayerId: unknown; winnerPoints: unknown },
+  input: { version: unknown; winnerPoints: unknown },
 ): SessionView {
   const session = mustGet(sessionId);
   requireAdmin(session, auth);
   if (session.players.length < 2) {
     throw new AppError("Scoring opens when a second player joins");
   }
-  if (typeof input.winnerPlayerId !== "string" || !session.players.some((player) => player.id === input.winnerPlayerId)) {
-    throw new AppError("Pick a winner from this session");
-  }
   const version = readVersion(input.version);
   const winnerPoints = readWinnerPoints(input.winnerPoints);
-  const winnerPlayerId = input.winnerPlayerId;
   const db = getDb();
 
   const write = db.transaction(() => {
     bump(sessionId, version);
-    storeWinner(sessionId, winnerPlayerId, winnerPoints);
+    const openHand = loadOpenHand(sessionId);
+    if (!openHand.winnerPlayerId) throw new AppError("Wait until a seat declares");
+    storeWinner(sessionId, openHand.winnerPlayerId, winnerPoints);
   });
   write();
 
@@ -527,12 +578,12 @@ export function saveOpenHand(sessionId: string, auth: DeviceAuth, version: unkno
     const players = loadPlayers(sessionId);
     const openHand = loadOpenHand(sessionId);
     if (!openHand.winnerPlayerId || !players.some((player) => player.id === openHand.winnerPlayerId)) {
-      throw new AppError("Pick a winner");
+      throw new AppError("Someone has to declare before the hand can be saved");
     }
     const byPlayer = new Map(openHand.scores.map((score) => [score.playerId, score.points]));
     const winnerPlayerId = openHand.winnerPlayerId;
     if (players.some((player) => player.id !== winnerPlayerId && !byPlayer.has(player.id))) {
-      throw new AppError("Every other player needs a score before the hand can be saved");
+      throw new AppError("Every other seat needs a loss before the hand can be saved");
     }
     const winnerPoints =
       openHand.winnerOverridden && openHand.winnerPoints !== null

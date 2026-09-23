@@ -46,9 +46,6 @@ export function OpenHand({
   const [text, setText] = useState(serverText);
   const [dirty, setDirty] = useState(false);
   const [draftVersion, setDraftVersion] = useState<number | null>(null);
-  const [winnerId, setWinnerId] = useState<string | null>(session.openHand.winnerPlayerId);
-  const [winnerPending, setWinnerPending] = useState(false);
-  const [winnerVersion, setWinnerVersion] = useState<number | null>(null);
   const [pointsText, setPointsText] = useState("");
   const [pointsPending, setPointsPending] = useState(false);
   const [counterOpen, setCounterOpen] = useState(false);
@@ -59,7 +56,9 @@ export function OpenHand({
   const parsedMine = parsePoints(shownText);
   const mineReady = parsedMine !== null && parsedMine >= 0;
   const held = dirty && draftVersion !== null && draftVersion !== session.version;
-  const activeWinnerId = winnerPending ? winnerId : session.openHand.winnerPlayerId;
+  const winnerId = session.openHand.winnerPlayerId;
+  const iAmWinner = session.playerId !== null && winnerId === session.playerId;
+  const declaredBy = session.players.find((player) => player.id === winnerId) ?? null;
 
   const serverScores = useMemo(() => {
     return new Map(session.openHand.scores.map((score) => [score.playerId, score.points]));
@@ -81,6 +80,12 @@ export function OpenHand({
     setError(caught instanceof Error ? caught.message : "Could not save");
   }
 
+  function clearLossDraft() {
+    setText("");
+    setDirty(false);
+    setDraftVersion(null);
+  }
+
   async function sendScore(version: number): Promise<SessionView | null> {
     if (!mineReady || parsedMine === null) {
       setError("Enter a score of 0 or more");
@@ -97,18 +102,14 @@ export function OpenHand({
     return next;
   }
 
-  async function sendWinner(
-    version: number,
-    playerId: string,
-    winnerPoints: number | null,
-  ): Promise<SessionView | null> {
-    const next = await requestJson<SessionView>(`/api/sessions/${session.id}/open-hand/winner`, {
+  async function sendOverride(version: number, winnerPoints: number | null): Promise<SessionView | null> {
+    const next = await requestJson<SessionView>(`/api/sessions/${session.id}/open-hand/winner/points`, {
       method: "PUT",
       headers: deviceHeaders(auth),
-      body: JSON.stringify({ version, winnerPlayerId: playerId, winnerPoints }),
+      body: JSON.stringify({ version, winnerPoints }),
     });
-    setWinnerPending(false);
-    setWinnerVersion(null);
+    setPointsPending(false);
+    setPointsText("");
     onSession(next);
     return next;
   }
@@ -128,11 +129,52 @@ export function OpenHand({
     }
   }
 
+  async function declareSelf() {
+    if (!writesEnabled || busy.current || !session.playerId || winnerId) return;
+    busy.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await requestJson<SessionView>(`/api/sessions/${session.id}/open-hand/winner`, {
+        method: "PUT",
+        headers: deviceHeaders(auth),
+        body: JSON.stringify({ version: session.version }),
+      });
+      clearLossDraft();
+      onSession(next);
+    } catch (caught) {
+      fail(caught);
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
+  }
+
+  async function takeBack() {
+    if (!writesEnabled || busy.current || !iAmWinner) return;
+    busy.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await requestJson<SessionView>(`/api/sessions/${session.id}/open-hand/winner`, {
+        method: "DELETE",
+        headers: deviceHeaders(auth),
+        body: JSON.stringify({ version: session.version }),
+      });
+      onSession(next);
+    } catch (caught) {
+      fail(caught);
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
+  }
+
   const suggestion = useMemo(() => {
-    if (!activeWinnerId) return null;
+    if (!winnerId) return null;
     const raw: number[] = [];
     for (const player of session.players) {
-      if (player.id === activeWinnerId) continue;
+      if (player.id === winnerId) continue;
       const points =
         player.id === session.playerId && dirty && mineReady && parsedMine !== null
           ? parsedMine
@@ -141,36 +183,18 @@ export function OpenHand({
       raw.push(points);
     }
     return suggestWinnerPoints(raw);
-  }, [activeWinnerId, dirty, mineReady, parsedMine, serverScores, session.playerId, session.players]);
+  }, [dirty, mineReady, parsedMine, serverScores, session.playerId, session.players, winnerId]);
 
   const shownWinnerPoints = pointsPending
     ? pointsText
-    : !winnerPending && session.openHand.winnerOverridden && session.openHand.winnerPoints !== null
+    : session.openHand.winnerOverridden && session.openHand.winnerPoints !== null
       ? String(session.openHand.winnerPoints)
       : suggestion === null
         ? ""
         : String(suggestion);
 
-  function chooseWinner(playerId: string) {
-    setWinnerId(playerId);
-    setWinnerPending(true);
-    setWinnerVersion((current) => (current === null ? session.version : current));
-    setPointsPending(false);
-    setPointsText("");
-    setError(null);
-    if (!writesEnabled || busy.current) return;
-    busy.current = true;
-    setSaving(true);
-    void sendWinner(session.version, playerId, null)
-      .catch((caught) => fail(caught))
-      .finally(() => {
-        busy.current = false;
-        setSaving(false);
-      });
-  }
-
   const loserPreview = session.players
-    .filter((player) => player.id !== activeWinnerId)
+    .filter((player) => player.id !== winnerId)
     .map((player) => {
       const points =
         player.id === session.playerId && dirty && mineReady && parsedMine !== null
@@ -180,25 +204,21 @@ export function OpenHand({
       return roundLoserPoints(points);
     });
   const money =
-    session.role === "admin" && activeWinnerId && loserPreview.every((points) => points !== null)
+    session.role === "admin" && winnerId && loserPreview.every((points) => points !== null)
       ? gameMoney(
           loserPreview.filter((points): points is number => points !== null),
           session.pointValue,
         )
       : null;
 
-  const iAmWinner = session.playerId !== null && activeWinnerId === session.playerId;
   const losersReady = session.players
-    .filter((player) => player.id !== activeWinnerId)
+    .filter((player) => player.id !== winnerId)
     .every((player) => (player.id === session.playerId ? mineReady : serverScores.has(player.id)));
-  const canSave =
-    session.role === "admin" && writesEnabled && activeWinnerId !== null && losersReady && !saving;
-  const scoreHeld = held;
-  const winnerHeld = winnerPending && winnerVersion !== null && winnerVersion !== session.version;
+  const canSave = session.role === "admin" && writesEnabled && winnerId !== null && losersReady && !saving;
   const me = session.players.find((player) => player.id === session.playerId) ?? null;
 
   async function saveHand() {
-    if (!canSave || !activeWinnerId || busy.current) return;
+    if (!canSave || !winnerId || busy.current) return;
     busy.current = true;
     setSaving(true);
     setError(null);
@@ -209,13 +229,13 @@ export function OpenHand({
         if (!scored) return;
         version = scored.version;
       }
-      if (winnerPending || pointsPending) {
-        const winnerPoints = pointsPending ? parsePoints(pointsText) : null;
-        if (pointsPending && winnerPoints === null) {
+      if (pointsPending) {
+        const winnerPoints = parsePoints(pointsText);
+        if (winnerPoints === null) {
           setError("Enter the winner's points");
           return;
         }
-        const picked = await sendWinner(version, activeWinnerId, pointsPending ? winnerPoints : null);
+        const picked = await sendOverride(version, winnerPoints);
         if (!picked) return;
         version = picked.version;
       }
@@ -225,8 +245,6 @@ export function OpenHand({
         body: JSON.stringify({ version }),
       });
       setPointsPending(false);
-      setWinnerPending(false);
-      setWinnerVersion(null);
       setPointsText("");
       onSession(saved);
     } catch (caught) {
@@ -241,44 +259,22 @@ export function OpenHand({
     ? offline
       ? "Offline"
       : "Checking the sheet…"
-    : scoreHeld
+    : held
       ? "Send these points"
       : "Send points";
+  const declareBlocked = winnerId !== null && !iAmWinner;
 
   return (
     <div className="mt-4">
-      {session.role === "admin" && (
-        <fieldset>
-          <legend className="mb-2 text-sm font-medium">Who won?</legend>
-          <div className="grid grid-cols-2 gap-2">
-            {session.players.map((player) => {
-              const selected = player.id === activeWinnerId;
-              return (
-                <Button
-                  key={player.id}
-                  type="button"
-                  variant={selected ? "default" : "outline"}
-                  aria-pressed={selected}
-                  className="h-14 text-base"
-                  onClick={() => chooseWinner(player.id)}
-                >
-                  {player.name}
-                </Button>
-              );
-            })}
-          </div>
-        </fieldset>
-      )}
-
-      <div className="mt-4 space-y-3">
+      <div className="space-y-3">
         {session.players.map((player) => {
           if (player.id !== session.playerId) {
             if (session.role !== "admin") return null;
-            if (player.id === activeWinnerId) {
+            if (player.id === winnerId) {
               return (
                 <div key={player.id} className="rounded-2xl border border-[#e4dccb] bg-[#fbf8f2] p-3">
                   <p className="text-base font-medium">{player.name}</p>
-                  <p className="mt-1 text-sm text-[#5e584e]">Winner. This seat does not enter points.</p>
+                  <p className="mt-1 text-sm text-[#5e584e]">Declared. This seat does not enter a loss.</p>
                 </div>
               );
             }
@@ -293,7 +289,7 @@ export function OpenHand({
                 ) : (
                   <>
                     <p className="font-heading text-3xl tabular-nums">{formatPoints(raw)}</p>
-                    {stored !== null && stored !== raw && player.id !== activeWinnerId && (
+                    {stored !== null && stored !== raw && (
                       <p className="text-sm text-muted-foreground">Stored as {stored}</p>
                     )}
                   </>
@@ -302,20 +298,16 @@ export function OpenHand({
             );
           }
 
-          if (iAmWinner) {
-            return (
-              <div key={player.id} className="rounded-2xl border border-[#e4dccb] bg-[#fbf8f2] p-3">
-                <p className="text-base font-medium">You won</p>
-                <p className="mt-1 text-sm text-[#5e584e]">This seat does not enter points.</p>
-              </div>
-            );
-          }
-
           const stored = mineReady && parsedMine !== null ? roundLoserPoints(parsedMine) : null;
           return (
             <div key={player.id} className="rounded-2xl border border-[#e4dccb] bg-[#fbf8f2] p-3">
+              {iAmWinner && (
+                <p className="mb-3 text-sm text-[#5e584e]">
+                  You declared. Entering a loss takes that back.
+                </p>
+              )}
               <Label htmlFor="my-points" className="text-base">
-                Your points
+                Points you lost
               </Label>
               <Input
                 id="my-points"
@@ -349,7 +341,7 @@ export function OpenHand({
               {parsedMine !== null && parsedMine < 0 && (
                 <p className="mt-1 text-sm text-destructive">Enter 0 or more</p>
               )}
-              {session.role === "seat" ? null : (
+              {session.role === "admin" && (
                 <Button
                   type="button"
                   variant="outline"
@@ -360,15 +352,40 @@ export function OpenHand({
                   {sendLabel}
                 </Button>
               )}
+              {iAmWinner ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-3 h-12 w-full"
+                  disabled={!writesEnabled || saving}
+                  onClick={() => void takeBack()}
+                >
+                  Take it back
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  className="mt-3 h-12 w-full"
+                  disabled={!writesEnabled || saving || declareBlocked}
+                  onClick={() => void declareSelf()}
+                >
+                  I won
+                </Button>
+              )}
+              {declareBlocked && declaredBy && (
+                <p className="mt-2 text-sm text-[#5e584e]">
+                  {declaredBy.name} declared. They have to take it back.
+                </p>
+              )}
             </div>
           );
         })}
       </div>
 
-      {session.role === "admin" && activeWinnerId && (
+      {session.role === "admin" && winnerId && (
         <div className="mt-4 rounded-2xl border border-[#c4a15a] bg-[#f8f1dc] p-3">
           <Label htmlFor="winner-points" className="text-base">
-            {session.players.find((player) => player.id === activeWinnerId)?.name}&apos;s points
+            {declaredBy?.name}&apos;s points
           </Label>
           <Input
             id="winner-points"
@@ -390,36 +407,32 @@ export function OpenHand({
               type="button"
               variant="ghost"
               className="mt-1 h-11 px-0"
-                onClick={() => {
-                  setPointsPending(false);
-                  setPointsText("");
-                  if (!activeWinnerId) return;
-                  setWinnerPending(true);
-                  setWinnerVersion((current) => (current === null ? session.version : current));
-                  if (!writesEnabled || busy.current) return;
-                  busy.current = true;
-                  setSaving(true);
-                  void sendWinner(session.version, activeWinnerId, null)
-                    .catch((caught) => fail(caught))
-                    .finally(() => {
-                      busy.current = false;
-                      setSaving(false);
-                    });
-                }}
+              onClick={() => {
+                setPointsPending(false);
+                setPointsText("");
+                if (!winnerId || !writesEnabled || busy.current) return;
+                busy.current = true;
+                setSaving(true);
+                void sendOverride(session.version, null)
+                  .catch((caught) => fail(caught))
+                  .finally(() => {
+                    busy.current = false;
+                    setSaving(false);
+                  });
+              }}
             >
               Use calculated
             </Button>
           )}
           {money !== null && (
             <p className="mt-2 text-base font-medium">
-              {session.players.find((player) => player.id === activeWinnerId)?.name} is owed{" "}
-              {formatDollars(money)}
+              {declaredBy?.name} is owed {formatDollars(money)}
             </p>
           )}
         </div>
       )}
 
-      {(scoreHeld || winnerHeld) && (
+      {held && (
         <p className="mt-4 text-sm text-[#5e584e]">
           The sheet changed. What you typed stays here until you send it.
         </p>
@@ -434,10 +447,8 @@ export function OpenHand({
         <div className="mx-auto max-w-5xl">
           {session.role === "admin" ? (
             <Button type="button" size="xl" className="w-full" disabled={!canSave} onClick={() => void saveHand()}>
-              {saving ? "Saving…" : scoreHeld || winnerHeld ? "Save this hand" : "Save hand"}
+              {saving ? "Saving…" : held ? "Save this hand" : "Save hand"}
             </Button>
-          ) : iAmWinner ? (
-            <p className="py-3 text-center text-sm text-[#5e584e]">This seat does not enter points.</p>
           ) : (
             <Button
               type="button"

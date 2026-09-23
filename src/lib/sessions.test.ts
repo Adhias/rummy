@@ -10,9 +10,11 @@ import {
   createSession,
   deleteGame,
   getSession,
+  declareWinner,
+  retractWinner,
   saveOpenHand,
   setSeatPoints,
-  setWinner,
+  setWinnerPoints,
   updateGame,
   viewSession,
   viewSessionByJoinCode,
@@ -92,12 +94,12 @@ function finishHand(
   const scored = givePoints(id, seats, points, version);
   const winner = seats.find((seat) => seat.name === winnerName);
   if (!winner) throw new Error(`Missing ${winnerName}`);
-  const withWinner = setWinner(id, adminAuth, {
-    version: scored,
-    winnerPlayerId: winner.playerId,
-    winnerPoints,
-  });
-  return saveOpenHand(id, adminAuth, withWinner.version);
+  const declared = declareWinner(id, auth(winner.seatCode), scored);
+  const ready =
+    winnerPoints === null
+      ? declared
+      : setWinnerPoints(id, adminAuth, { version: declared.version, winnerPoints });
+  return saveOpenHand(id, adminAuth, ready.version);
 }
 
 test("a pack and an 80-point hand update totals, and 66 is stored as 70", () => {
@@ -342,23 +344,15 @@ test("a seat write changes only that seat, and a stale write is refused", () => 
   expect(boView.games).toEqual([]);
 });
 
-test("the hand is saved only when every other seat has a score and the admin set a winner", () => {
+test("the hand is saved when one seat has declared and every other seat has a loss", () => {
   const { id, seats, adminAuth, session, joinCode } = table(["Anu", "Bo"]);
   const anuOnly = setSeatPoints(id, auth(seats[0]!.seatCode), { version: session.version, points: 0 });
-  const withWinner = setWinner(id, adminAuth, {
-    version: anuOnly.version,
-    winnerPlayerId: seats[0]!.playerId,
-    winnerPoints: null,
-  });
-  expect(() => saveOpenHand(id, adminAuth, withWinner.version)).toThrow(/other player/i);
+  const withWinner = declareWinner(id, auth(seats[0]!.seatCode), anuOnly.version);
+  expect(withWinner.openHand.scores).toEqual([]);
+  expect(withWinner.openHand.winnerPlayerId).toBe(seats[0]!.playerId);
+  expect(() => saveOpenHand(id, adminAuth, withWinner.version)).toThrow(/other seat/i);
 
-  expect(() =>
-    setWinner(id, auth(seats[1]!.seatCode), {
-      version: withWinner.version,
-      winnerPlayerId: seats[1]!.playerId,
-      winnerPoints: null,
-    }),
-  ).toThrow(/started the table/);
+  expect(() => declareWinner(id, auth(seats[1]!.seatCode), withWinner.version)).toThrow(/take it back/i);
   expect(() => saveOpenHand(id, auth(seats[1]!.seatCode), withWinner.version)).toThrow(/started the table/);
 
   const watcher = viewSession(id, { seatCode: null, joinCode });
@@ -381,53 +375,60 @@ test("the hand is saved only when every other seat has a score and the admin set
   expect(watching.openHand.scores).toEqual([]);
 });
 
-test("the winner does not enter points, including when the admin won", () => {
+test("a seat declares itself, and only that seat can take it back", () => {
   const { id, seats, adminAuth, session } = table(["Anu", "Bo", "Chitra"]);
-  const picked = setWinner(id, adminAuth, {
-    version: session.version,
-    winnerPlayerId: seats[0]!.playerId,
-    winnerPoints: null,
-  });
-  const winnerPhone = viewSession(id, auth(seats[0]!.seatCode));
-  expect(winnerPhone.role).toBe("admin");
-  expect(winnerPhone.openHand.winnerPlayerId).toBe(seats[0]!.playerId);
-  expect(winnerPhone.openHand.scores).toEqual([]);
+  const lost = setSeatPoints(id, auth(seats[0]!.seatCode), { version: session.version, points: 30 });
+  const declared = declareWinner(id, auth(seats[0]!.seatCode), lost.version);
+  expect(declared.openHand.winnerPlayerId).toBe(seats[0]!.playerId);
+  expect(declared.openHand.scores).toEqual([]);
+  expect(declared.role).toBe("admin");
 
-  expect(() =>
-    setSeatPoints(id, auth(seats[0]!.seatCode), { version: picked.version, points: 12 }),
-  ).toThrow(/winner does not enter/i);
-  expect(() => saveOpenHand(id, adminAuth, picked.version)).toThrow(/other player/i);
+  const boPhone = viewSession(id, auth(seats[1]!.seatCode));
+  expect(boPhone.openHand.winnerPlayerId).toBe(seats[0]!.playerId);
+  expect(() => declareWinner(id, auth(seats[1]!.seatCode), declared.version)).toThrow(/take it back/i);
+  expect(() => retractWinner(id, auth(seats[1]!.seatCode), declared.version)).toThrow(/not declared/i);
 
-  const bo = setSeatPoints(id, auth(seats[1]!.seatCode), { version: picked.version, points: 20 });
-  const chitra = setSeatPoints(id, auth(seats[2]!.seatCode), { version: bo.version, points: 66 });
+  const open = retractWinner(id, auth(seats[0]!.seatCode), declared.version);
+  expect(open.openHand.winnerPlayerId).toBeNull();
+  const boDeclared = declareWinner(id, auth(seats[1]!.seatCode), open.version);
+  expect(boDeclared.openHand.winnerPlayerId).toBe(seats[1]!.playerId);
+
+  const loss = setSeatPoints(id, auth(seats[1]!.seatCode), { version: boDeclared.version, points: 40 });
+  expect(loss.openHand.winnerPlayerId).toBeNull();
+  expect(loss.openHand.scores).toEqual([{ playerId: seats[1]!.playerId, points: 40 }]);
+
+  const again = declareWinner(id, auth(seats[1]!.seatCode), loss.version);
+  const anu = setSeatPoints(id, auth(seats[0]!.seatCode), { version: again.version, points: 20 });
+  const chitra = setSeatPoints(id, auth(seats[2]!.seatCode), { version: anu.version, points: 66 });
   const saved = saveOpenHand(id, adminAuth, chitra.version);
   expect(saved.games[0]?.scores).toEqual([
-    { playerId: seats[0]!.playerId, points: -90 },
-    { playerId: seats[1]!.playerId, points: 20 },
+    { playerId: seats[0]!.playerId, points: 20 },
+    { playerId: seats[1]!.playerId, points: -90 },
     { playerId: seats[2]!.playerId, points: 70 },
   ]);
   expect(saved.games[0]?.money).toBe(90);
 });
 
-test("a winner who is not the admin is exempt, and an earlier score is not kept", () => {
+test("the admin can override the declared winner's points and cannot pick the seat", () => {
   const { id, seats, adminAuth, session } = table(["Anu", "Bo"]);
   const anu = setSeatPoints(id, auth(seats[0]!.seatCode), { version: session.version, points: 15 });
-  const bo = setSeatPoints(id, auth(seats[1]!.seatCode), { version: anu.version, points: 20 });
-  const picked = setWinner(id, adminAuth, {
-    version: bo.version,
-    winnerPlayerId: seats[1]!.playerId,
-    winnerPoints: null,
-  });
-  const boPhone = viewSession(id, auth(seats[1]!.seatCode));
-  expect(boPhone.role).toBe("seat");
-  expect(boPhone.openHand.winnerPlayerId).toBe(seats[1]!.playerId);
-  expect(boPhone.openHand.scores).toEqual([]);
-  expect(boPhone.openHand.winnerPoints).toBeNull();
+  const declared = declareWinner(id, auth(seats[1]!.seatCode), anu.version);
+  const sheet = viewSession(id, adminAuth);
+  expect(sheet.openHand.winnerPlayerId).toBe(seats[1]!.playerId);
+  expect(sheet.openHand.scores).toEqual([{ playerId: seats[0]!.playerId, points: 15 }]);
+  expect(() =>
+    setWinnerPoints(id, auth(seats[1]!.seatCode), { version: declared.version, winnerPoints: -5 }),
+  ).toThrow(/started the table/);
 
-  const saved = saveOpenHand(id, adminAuth, picked.version);
+  const overridden = setWinnerPoints(id, adminAuth, { version: declared.version, winnerPoints: -5 });
+  expect(overridden.openHand.winnerPlayerId).toBe(seats[1]!.playerId);
+  expect(overridden.openHand.winnerPoints).toBe(-5);
+  expect(overridden.openHand.winnerOverridden).toBe(true);
+
+  const saved = saveOpenHand(id, adminAuth, overridden.version);
   expect(saved.games[0]?.scores).toEqual([
     { playerId: seats[0]!.playerId, points: 20 },
-    { playerId: seats[1]!.playerId, points: -20 },
+    { playerId: seats[1]!.playerId, points: -5 },
   ]);
   expect(saved.games[0]?.money).toBe(20);
 });
@@ -442,6 +443,9 @@ test("scoring stays closed until two names exist", () => {
   ).toThrow(/second player/);
   expect(() =>
     saveOpenHand(created.session.id, auth(created.seatCode), created.session.version),
+  ).toThrow(/second player/);
+  expect(() =>
+    declareWinner(created.session.id, auth(created.seatCode), created.session.version),
   ).toThrow(/second player/);
 });
 
