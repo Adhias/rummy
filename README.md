@@ -13,7 +13,9 @@ This tracks Points Rummy only. It does not deal cards, and it does not score Poo
 - The rupees owed on a game are the opponents' stored points added together, times the rupee value. An overridden winner score does not change that amount.
 - Number cards count as their face value. Jacks, queens, kings, and aces are 10. Jokers are 0. The card counter can drop that total into a loser's field.
 
-## Run
+## Setup
+
+Requires Node.js 22. Install the dependencies and start the dev server:
 
 ```bash
 npm install
@@ -28,5 +30,6 @@ Sessions, players, and games are stored in SQLite at `data/rummy.sqlite`. Refres
 npm test
 npm run lint
 npm run build
-npm start
 ```
+
+`npm run build` produces the production server. It listens on `PORT` (default 3000), and `RUMMY_DB_PATH` chooses the SQLite file.
