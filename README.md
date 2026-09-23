@@ -1,6 +1,8 @@
 # Points Rummy
 
-A phone-friendly score sheet for Points Rummy. Name the players, set the dollar value of one point, and enter each game. The sheet keeps a running total. The lowest total is ahead. A new session starts at $0.10 per point.
+A phone-friendly score sheet for Points Rummy. One person starts a session, sets the dollar value of one point, and enters their name. Everyone else joins with the code or link and adds their own name. Each phone enters its own points. The phone that started the session sets the winner and saves the hand.
+
+The sheet keeps a running total. The lowest total is ahead. A new session starts at $0.10 per point. The stake does not change after the session starts.
 
 This tracks Points Rummy only. It does not deal cards, and it does not score Pool or Deals Rummy.
 
@@ -24,7 +26,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-Sessions, players, and games are stored in SQLite at `data/rummy.sqlite`. Refreshing or coming back later keeps the sheet. Past sessions stay in the list.
+Sessions, players, and games are stored in SQLite at `data/rummy.sqlite`. A phone remembers the seat it claimed, and refreshing that phone returns to that seat. Other phones join with the code. The session list on a phone is only the tables that phone started or joined.
 
 ```bash
 npm test

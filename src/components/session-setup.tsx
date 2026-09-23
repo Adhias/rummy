@@ -6,26 +6,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DEFAULT_POINT_VALUE } from "@/lib/scoring";
-import type { SessionDetail } from "@/lib/types";
+import type { SeatClaim } from "@/lib/types";
 
 export function SessionSetup({
   onCreated,
   onCancel,
 }: {
-  onCreated: (session: SessionDetail) => void;
+  onCreated: (claim: SeatClaim) => void;
   onCancel: (() => void) | null;
 }) {
-  const [count, setCount] = useState(2);
-  const [names, setNames] = useState(["", ""]);
+  const [name, setName] = useState("");
   const [pointValue, setPointValue] = useState(DEFAULT_POINT_VALUE.toFixed(2));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-
-  function setPlayerCount(next: number) {
-    const size = Math.min(6, Math.max(2, next));
-    setCount(size);
-    setNames((current) => Array.from({ length: size }, (_, index) => current[index] ?? ""));
-  }
 
   async function start() {
     const value = Number(pointValue);
@@ -33,18 +26,18 @@ export function SessionSetup({
       setError("Set a dollar value greater than zero");
       return;
     }
-    if (names.some((name) => name.trim() === "")) {
-      setError("Enter a name for every player");
+    if (name.trim() === "") {
+      setError("Enter your name");
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      const session = await requestJson<SessionDetail>("/api/sessions", {
+      const claim = await requestJson<SeatClaim>("/api/sessions", {
         method: "POST",
-        body: JSON.stringify({ pointValue: value, players: names }),
+        body: JSON.stringify({ pointValue: value, name }),
       });
-      onCreated(session);
+      onCreated(claim);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not start the session");
     } finally {
@@ -69,56 +62,21 @@ export function SessionSetup({
         )}
       </div>
       <p className="mb-5 text-base text-[#5e584e]">
-        Points Rummy. Set the dollar value of one point, then enter each game as you play. The
-        winner is paid the other players&apos; points times that value.
+        Points Rummy. Set the dollar value of one point and your name. The other players join from
+        their phones. The winner is paid the other players&apos; points times that value.
       </p>
 
-      <div className="mb-5 flex items-center justify-between gap-3">
-        <span className="text-base font-medium">Players</span>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-12 w-12 text-xl"
-            onClick={() => setPlayerCount(count - 1)}
-            disabled={count <= 2}
-            aria-label="Fewer players"
-          >
-            −
-          </Button>
-          <span className="w-8 text-center text-xl tabular-nums">{count}</span>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-12 w-12 text-xl"
-            onClick={() => setPlayerCount(count + 1)}
-            disabled={count >= 6}
-            aria-label="More players"
-          >
-            +
-          </Button>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        {names.map((name, index) => (
-          <div key={index}>
-            <Label htmlFor={`player-${index}`}>Player {index + 1}</Label>
-            <Input
-              id={`player-${index}`}
-              value={name}
-              autoCapitalize="words"
-              autoComplete="off"
-              autoFocus={index === 0}
-              onChange={(event) =>
-                setNames((current) =>
-                  current.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)),
-                )
-              }
-              className="mt-1 h-12 text-base"
-            />
-          </div>
-        ))}
+      <div>
+        <Label htmlFor="your-name">Your name</Label>
+        <Input
+          id="your-name"
+          value={name}
+          autoCapitalize="words"
+          autoComplete="off"
+          autoFocus
+          onChange={(event) => setName(event.target.value)}
+          className="mt-1 h-12 text-base"
+        />
       </div>
 
       <div className="mt-5">

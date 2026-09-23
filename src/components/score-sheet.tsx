@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { requestJson } from "@/components/api";
+import { ApiError, requestJson } from "@/components/api";
+import { deviceHeaders, type DeviceHeaders } from "@/components/device-memory";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { aheadPlayerIds, formatDollars, formatPoints } from "@/lib/scoring";
-import type { Game, SessionDetail } from "@/lib/types";
+import type { Game, SessionView } from "@/lib/types";
 
 function pointsClass(points: number): string {
   if (points < 0) return "text-[#1d6b45]";
@@ -22,65 +23,57 @@ function pointsClass(points: number): string {
 
 export function ScoreSheet({
   session,
-  onRename,
-  onAdd,
+  auth,
+  canEdit,
+  writesEnabled,
+  hasBar,
   onEdit,
   onChange,
+  onWriteError,
+  children,
 }: {
-  session: SessionDetail;
-  onRename: (playerId: string, name: string) => Promise<void>;
-  onAdd: () => void;
+  session: SessionView;
+  auth: DeviceHeaders;
+  canEdit: boolean;
+  writesEnabled: boolean;
+  hasBar: boolean;
   onEdit: (game: Game) => void;
-  onChange: (session: SessionDetail) => void;
+  onChange: (session: SessionView) => void;
+  onWriteError: (error: unknown) => void;
+  children?: React.ReactNode;
 }) {
-  const [names, setNames] = useState<Record<string, string>>({});
   const [pendingDelete, setPendingDelete] = useState<Game | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ahead = new Set(aheadPlayerIds(session.players, session.games.length));
 
-  async function commitName(playerId: string, current: string) {
-    const next = (names[playerId] ?? current).trim();
-    if (!next || next === current) {
-      setNames((draft) => {
-        const copy = { ...draft };
-        delete copy[playerId];
-        return copy;
-      });
-      return;
-    }
-    try {
-      await onRename(playerId, next);
-      setNames((draft) => {
-        const copy = { ...draft };
-        delete copy[playerId];
-        return copy;
-      });
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not rename");
-    }
-  }
-
   async function removeGame() {
-    if (!pendingDelete) return;
+    if (!pendingDelete || !writesEnabled) return;
     setDeleting(true);
     setError(null);
     try {
-      const next = await requestJson<SessionDetail>(
+      const next = await requestJson<SessionView>(
         `/api/sessions/${session.id}/games/${pendingDelete.id}`,
-        { method: "DELETE" },
+        {
+          method: "DELETE",
+          headers: {
+            ...deviceHeaders(auth),
+            "x-session-version": String(session.version),
+          },
+        },
       );
       setPendingDelete(null);
       onChange(next);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not delete the game");
+      if (caught instanceof ApiError && (caught.status === 409 || caught.status === 0)) onWriteError(caught);
     } finally {
       setDeleting(false);
     }
   }
 
   return (
-    <div className="pb-28">
+    <div className={hasBar ? "pb-28" : undefined}>
       <ul className="sticky top-0 z-10 -mx-4 grid grid-cols-2 gap-2 border-b border-[#e4dccb] bg-[#f7f3ea]/95 px-4 py-3 backdrop-blur sm:grid-cols-3">
         {session.players.map((player) => {
           const leading = ahead.has(player.id);
@@ -93,18 +86,7 @@ export function ScoreSheet({
                   : "rounded-2xl border border-[#e4dccb] bg-[#fbf8f2] px-3 py-2"
               }
             >
-              <input
-                aria-label={`Rename ${player.name}`}
-                value={names[player.id] ?? player.name}
-                onChange={(event) =>
-                  setNames((draft) => ({ ...draft, [player.id]: event.target.value }))
-                }
-                onBlur={() => void commitName(player.id, player.name)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
-                }}
-                className="w-full bg-transparent text-base font-medium outline-none"
-              />
+              <p className="text-base font-medium">{player.name}</p>
               <p className={`font-heading text-3xl tabular-nums ${pointsClass(player.total)}`}>
                 {formatPoints(player.total)}
               </p>
@@ -114,9 +96,13 @@ export function ScoreSheet({
         })}
       </ul>
 
+      {children}
+
       {session.games.length === 0 ? (
         <p className="px-1 py-10 text-center text-base text-[#5e584e]">
-          No games yet. Add the first hand.
+          {session.players.length < 2
+            ? "Share the code. Scoring opens when a second player joins."
+            : "No hands yet."}
         </p>
       ) : (
         <>
@@ -144,19 +130,28 @@ export function ScoreSheet({
                       );
                     })}
                   </ul>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <Button type="button" variant="outline" className="h-12" onClick={() => onEdit(game)}>
-                      Edit
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      className="h-12"
-                      onClick={() => setPendingDelete(game)}
-                    >
-                      Delete
-                    </Button>
-                  </div>
+                  {canEdit && (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-12"
+                        disabled={!writesEnabled}
+                        onClick={() => onEdit(game)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        className="h-12"
+                        disabled={!writesEnabled}
+                        onClick={() => setPendingDelete(game)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  )}
                 </article>
               );
             })}
@@ -173,9 +168,11 @@ export function ScoreSheet({
                     </th>
                   ))}
                   <th className="px-2 py-2 font-medium">Dollars</th>
-                  <th className="px-2 py-2 font-medium">
-                    <span className="sr-only">Actions</span>
-                  </th>
+                  {canEdit && (
+                    <th className="px-2 py-2 font-medium">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -197,21 +194,30 @@ export function ScoreSheet({
                       );
                     })}
                     <td className="px-2 py-3 whitespace-nowrap">{formatDollars(game.money)}</td>
-                    <td className="px-2 py-3">
-                      <div className="flex justify-end gap-2">
-                        <Button type="button" variant="outline" className="h-10" onClick={() => onEdit(game)}>
-                          Edit
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          className="h-10"
-                          onClick={() => setPendingDelete(game)}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </td>
+                    {canEdit && (
+                      <td className="px-2 py-3">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-10"
+                            disabled={!writesEnabled}
+                            onClick={() => onEdit(game)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            className="h-10"
+                            disabled={!writesEnabled}
+                            onClick={() => setPendingDelete(game)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -224,7 +230,7 @@ export function ScoreSheet({
                     </td>
                   ))}
                   <td />
-                  <td />
+                  {canEdit && <td />}
                 </tr>
               </tfoot>
             </table>
@@ -232,19 +238,11 @@ export function ScoreSheet({
         </>
       )}
 
-      {error && (
+      {error && !pendingDelete && (
         <p role="alert" className="mt-4 text-sm text-destructive">
           {error}
         </p>
       )}
-
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-[#e4dccb] bg-[#f7f3ea]/95 px-4 py-3 backdrop-blur pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <div className="mx-auto max-w-5xl">
-          <Button type="button" size="xl" className="w-full" onClick={onAdd}>
-            Add game
-          </Button>
-        </div>
-      </div>
 
       <Dialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
         <DialogContent>
@@ -252,11 +250,22 @@ export function ScoreSheet({
             <DialogTitle>Delete this game?</DialogTitle>
             <DialogDescription>The running totals update as soon as it is gone.</DialogDescription>
           </DialogHeader>
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
           <DialogFooter>
             <Button type="button" variant="outline" className="h-12" onClick={() => setPendingDelete(null)}>
               Cancel
             </Button>
-            <Button type="button" variant="destructive" className="h-12" disabled={deleting} onClick={() => void removeGame()}>
+            <Button
+              type="button"
+              variant="destructive"
+              className="h-12"
+              disabled={deleting || !writesEnabled}
+              onClick={() => void removeGame()}
+            >
               {deleting ? "Deleting…" : "Delete"}
             </Button>
           </DialogFooter>

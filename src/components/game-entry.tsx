@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { requestJson } from "@/components/api";
+import { ApiError, requestJson } from "@/components/api";
 import { CardCounter } from "@/components/card-counter";
+import { deviceHeaders, type DeviceHeaders } from "@/components/device-memory";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,7 +17,7 @@ import {
   roundLoserPoints,
   suggestWinnerPoints,
 } from "@/lib/scoring";
-import type { Game, SessionDetail } from "@/lib/types";
+import type { Game, SessionView } from "@/lib/types";
 
 const PRESETS = [
   { label: "Pack", aria: "Pack, 20 points", points: PACK_POINTS },
@@ -33,13 +34,19 @@ function loserStored(text: string): number | null {
 export function GameEntry({
   session,
   game,
+  auth,
+  writesEnabled,
   onCancel,
   onSaved,
+  onWriteError,
 }: {
-  session: SessionDetail;
-  game: Game | null;
+  session: SessionView;
+  game: Game;
+  auth: DeviceHeaders;
+  writesEnabled: boolean;
   onCancel: () => void;
-  onSaved: (session: SessionDetail) => void;
+  onSaved: (session: SessionView) => void;
+  onWriteError: (error: unknown) => void;
 }) {
   const [winnerId, setWinnerId] = useState<string | null>(game?.winnerPlayerId ?? null);
   const [loserPoints, setLoserPoints] = useState<Record<string, string>>(() => {
@@ -70,6 +77,8 @@ export function GameEntry({
   const [counterFor, setCounterFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [openedVersion] = useState(session.version);
+  const sheetMoved = session.version !== openedVersion;
 
   const suggestion = useMemo(() => {
     if (!winnerId) return null;
@@ -156,16 +165,16 @@ export function GameEntry({
     setSaving(true);
     setError(null);
     try {
-      const path = game
-        ? `/api/sessions/${session.id}/games/${game.id}`
-        : `/api/sessions/${session.id}/games`;
-      const next = await requestJson<SessionDetail>(path, {
-        method: game ? "PATCH" : "POST",
-        body: JSON.stringify({ winnerPlayerId: winnerId, scores }),
+      if (!writesEnabled) return;
+      const next = await requestJson<SessionView>(`/api/sessions/${session.id}/games/${game.id}`, {
+        method: "PATCH",
+        headers: deviceHeaders(auth),
+        body: JSON.stringify({ version: session.version, winnerPlayerId: winnerId, scores }),
       });
       onSaved(next);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not save the game");
+      if (caught instanceof ApiError && (caught.status === 409 || caught.status === 0)) onWriteError(caught);
     } finally {
       setSaving(false);
     }
@@ -180,7 +189,7 @@ export function GameEntry({
       }}
     >
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="font-heading text-2xl">{game ? "Edit game" : "New game"}</h2>
+        <h2 className="font-heading text-2xl">Edit game</h2>
         <Button type="button" variant="outline" className="h-12 px-4" onClick={onCancel}>
           Back
         </Button>
@@ -302,6 +311,11 @@ export function GameEntry({
         </div>
       )}
 
+      {sheetMoved && (
+        <p className="mt-4 text-sm text-[#5e584e]">
+          The sheet changed. These scores stay here until you save them again.
+        </p>
+      )}
       {error && (
         <p role="alert" className="mt-4 text-sm text-destructive">
           {error}
@@ -310,8 +324,8 @@ export function GameEntry({
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-[#e4dccb] bg-[#f7f3ea]/95 px-4 py-3 backdrop-blur pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <div className="mx-auto max-w-5xl">
-          <Button type="submit" size="xl" className="w-full" disabled={saving}>
-            {saving ? "Saving…" : game ? "Save changes" : "Save game"}
+          <Button type="submit" size="xl" className="w-full" disabled={saving || !writesEnabled}>
+            {saving ? "Saving…" : sheetMoved ? "Save these scores" : "Save changes"}
           </Button>
         </div>
       </div>

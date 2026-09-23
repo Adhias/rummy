@@ -1,31 +1,12 @@
-import { AppError } from "@/lib/errors";
-import { createSession, listSessions } from "@/lib/sessions";
-
-function errorResponse(error: unknown) {
-  if (error instanceof AppError) {
-    return Response.json({ error: error.message }, { status: error.status });
-  }
-  console.error(error);
-  return Response.json({ error: "Something went wrong" }, { status: 500 });
-}
-
-export async function GET() {
-  try {
-    return Response.json(listSessions());
-  } catch (error) {
-    return errorResponse(error);
-  }
-}
+import { jsonError } from "@/lib/http";
+import { createSession } from "@/lib/sessions";
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { pointValue?: unknown; players?: unknown };
-    const session = createSession({
-      pointValue: body.pointValue,
-      players: body.players,
-    });
-    return Response.json(session, { status: 201 });
+    const body = (await request.json()) as { pointValue?: unknown; name?: unknown };
+    const claim = createSession({ pointValue: body.pointValue, name: body.name });
+    return Response.json(claim, { status: 201 });
   } catch (error) {
-    return errorResponse(error);
+    return jsonError(error);
   }
 }
