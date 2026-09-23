@@ -4,6 +4,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { resetDb } from "@/lib/db";
+import { applyLive, subscribe, type LiveEvent } from "@/lib/live";
 import { DEFAULT_POINT_VALUE, DOUBLE_PACK_POINTS, FULL_COUNT_POINTS, PACK_POINTS } from "@/lib/scoring";
 import {
   addPlayer,
@@ -339,9 +340,76 @@ test("a seat write changes only that seat, and a stale write is refused", () => 
 
   const boView = viewSession(id, auth(seats[1]!.seatCode));
   expect(boView.role).toBe("seat");
-  expect(boView.openHand.scores).toEqual([{ playerId: seats[1]!.playerId, points: 66 }]);
+  expect(boView.openHand.scores).toEqual([
+    { playerId: seats[0]!.playerId, points: 20 },
+    { playerId: seats[1]!.playerId, points: 66 },
+  ]);
   expect(boView.openHand.winnerPlayerId).toBeNull();
   expect(boView.games).toEqual([]);
+});
+
+test("another phone sees that seat's new choice and not a copy of the hand", () => {
+  const { id, seats, session } = table(["Anu", "Bo"]);
+  const boBefore = viewSession(id, auth(seats[1]!.seatCode));
+  const heard: LiveEvent[] = [];
+  const stop = subscribe(id, (event) => heard.push(event));
+  try {
+    const anu = setSeatPoints(id, auth(seats[0]!.seatCode), { version: session.version, points: 15 });
+    const choice = heard[0];
+    expect(choice).toEqual({
+      type: "seat",
+      version: anu.version,
+      playerId: seats[0]!.playerId,
+      points: 15,
+      winnerPlayerId: null,
+      winnerPoints: null,
+      winnerOverridden: false,
+    });
+    expect(choice && "scores" in choice).toBe(false);
+    expect(choice && "games" in choice).toBe(false);
+
+    const seen = choice ? applyLive(boBefore, choice) : boBefore;
+    expect(seen.openHand.scores).toEqual([{ playerId: seats[0]!.playerId, points: 15 }]);
+    expect(seen.games).toEqual([]);
+    expect(seen.version).toBe(anu.version);
+
+    const pack = setSeatPoints(id, auth(seats[0]!.seatCode), { version: anu.version, points: PACK_POINTS });
+    const replaced = heard[1] ? applyLive(seen, heard[1]) : seen;
+    expect(replaced.openHand.scores).toEqual([{ playerId: seats[0]!.playerId, points: 20 }]);
+    expect(replaced.version).toBe(pack.version);
+
+    const declared = declareWinner(id, auth(seats[0]!.seatCode), pack.version);
+    const won = heard[2] ? applyLive(replaced, heard[2]) : replaced;
+    expect(won.openHand.winnerPlayerId).toBe(seats[0]!.playerId);
+    expect(won.openHand.scores).toEqual([]);
+    expect(won.games).toEqual([]);
+    expect(won.version).toBe(declared.version);
+    expect(applyLive(won, heard[0]!)).toBe(won);
+  } finally {
+    stop();
+  }
+});
+
+test("a saved hand is told to the other phones without the interim draft", () => {
+  const { id, seats, adminAuth, session } = table(["Anu", "Bo"]);
+  const boBefore = viewSession(id, auth(seats[1]!.seatCode));
+  const heard: LiveEvent[] = [];
+  const stop = subscribe(id, (event) => heard.push(event));
+  try {
+    const loss = setSeatPoints(id, auth(seats[1]!.seatCode), { version: session.version, points: 20 });
+    const declared = declareWinner(id, auth(seats[0]!.seatCode), loss.version);
+    const saved = saveOpenHand(id, adminAuth, declared.version);
+    const event = heard.at(-1);
+    expect(event?.type).toBe("saved");
+    if (!event || event.type !== "saved") return;
+    const seen = applyLive(boBefore, event);
+    expect(seen.games.map((game) => game.id)).toEqual(saved.games.map((game) => game.id));
+    expect(seen.openHand.scores).toEqual([]);
+    expect(seen.openHand.winnerPlayerId).toBeNull();
+    expect(event.game.scores).toEqual(saved.games[0]?.scores);
+  } finally {
+    stop();
+  }
 });
 
 test("a later choice replaces the earlier one and does not save the hand", () => {

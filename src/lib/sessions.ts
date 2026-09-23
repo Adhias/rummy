@@ -1,4 +1,5 @@
 import { AppError } from "@/lib/errors";
+import { publish } from "@/lib/live";
 import { getDb } from "@/lib/db";
 import {
   gameMoney,
@@ -177,18 +178,10 @@ function joinMatches(session: SessionDetail, auth: DeviceAuth): boolean {
   return Boolean(code && session.joinCode && code === session.joinCode);
 }
 
-function visibleOpenHand(role: PhoneRole, playerId: string | null, openHand: OpenHand): OpenHand {
+function visibleOpenHand(role: PhoneRole, openHand: OpenHand): OpenHand {
   if (role === "admin") return openHand;
-  if (role === "seat" && playerId) {
-    return {
-      scores: openHand.scores.filter((score) => score.playerId === playerId),
-      winnerPlayerId: openHand.winnerPlayerId,
-      winnerPoints: null,
-      winnerOverridden: false,
-    };
-  }
   return {
-    scores: [],
+    scores: openHand.scores,
     winnerPlayerId: openHand.winnerPlayerId,
     winnerPoints: null,
     winnerOverridden: false,
@@ -212,7 +205,7 @@ function present(session: SessionDetail, auth: DeviceAuth): SessionView {
     playerId,
     players: session.players,
     games: session.games,
-    openHand: visibleOpenHand(role, playerId, session.openHand),
+    openHand: visibleOpenHand(role, session.openHand),
     rosterOpen: session.games.length === 0 && session.players.length < 6,
   };
 }
@@ -437,7 +430,35 @@ export function setSeatPoints(
   });
   write();
 
+  publishSeat(sessionId, seat.id);
   return present(mustGet(sessionId), auth);
+}
+
+function publishSeat(sessionId: string, playerId: string) {
+  const session = mustGet(sessionId);
+  const score = session.openHand.scores.find((item) => item.playerId === playerId);
+  publish(sessionId, {
+    type: "seat",
+    version: session.version,
+    playerId,
+    points: score?.points ?? null,
+    winnerPlayerId: session.openHand.winnerPlayerId,
+    winnerPoints: session.openHand.winnerPoints,
+    winnerOverridden: session.openHand.winnerOverridden,
+  });
+}
+
+function publishSaved(sessionId: string) {
+  const session = mustGet(sessionId);
+  const game = session.games[session.games.length - 1];
+  if (!game) return;
+  publish(sessionId, {
+    type: "saved",
+    version: session.version,
+    openHand: session.openHand,
+    game,
+    players: session.players,
+  });
 }
 
 function storeWinner(
@@ -481,6 +502,7 @@ export function declareWinner(sessionId: string, auth: DeviceAuth, version: unkn
   });
   write();
 
+  publishSeat(sessionId, seat.id);
   return present(mustGet(sessionId), auth);
 }
 
@@ -504,6 +526,7 @@ export function retractWinner(sessionId: string, auth: DeviceAuth, version: unkn
   });
   write();
 
+  publishSeat(sessionId, seat.id);
   return present(mustGet(sessionId), auth);
 }
 
@@ -529,6 +552,9 @@ export function setWinnerPoints(
   });
   write();
 
+  const openHand = loadOpenHand(sessionId);
+  if (!openHand.winnerPlayerId) throw new AppError("Wait until a seat declares");
+  publishSeat(sessionId, openHand.winnerPlayerId);
   return present(mustGet(sessionId), auth);
 }
 
@@ -616,6 +642,7 @@ export function saveOpenHand(sessionId: string, auth: DeviceAuth, version: unkno
   });
   save();
 
+  publishSaved(sessionId);
   return present(mustGet(sessionId), auth);
 }
 

@@ -263,7 +263,6 @@ export function OpenHand({
       <div className="space-y-3">
         {session.players.map((player) => {
           if (player.id !== session.playerId) {
-            if (session.role !== "admin") return null;
             if (player.id === winnerId) {
               return (
                 <div key={player.id} className="rounded-2xl border border-[#e4dccb] bg-[#fbf8f2] p-3">

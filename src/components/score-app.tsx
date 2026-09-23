@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { applyLive } from "@/lib/live";
 import { aheadPlayerIds, formatDollars } from "@/lib/scoring";
 import type { Game, SeatClaim, SessionView } from "@/lib/types";
 
@@ -199,48 +200,66 @@ export function ScoreApp({ initialJoinCode }: { initialJoinCode?: string }) {
   useEffect(() => {
     if (!sessionId) return;
     let stopped = false;
+    let attempt = 0;
+    let retry = 0;
+    const controller = new AbortController();
 
-    async function poll() {
-      if (stopped || document.visibilityState === "hidden") return;
-      if (typeof navigator !== "undefined" && !navigator.onLine) {
-        setOffline(true);
-        setStale(true);
-        return;
-      }
-      try {
-        const auth = memoryRef.current.sessions.find((item) => item.sessionId === sessionId);
-        if (!auth) return;
-        const next = await requestJson<SessionView>(`/api/sessions/${sessionId}`, {
-          headers: deviceHeaders(auth),
-        });
-        if (stopped) return;
-        setSession((current) => {
-          if (!current || current.id !== next.id) return next;
-          if (next.version < current.version) return current;
-          return next;
-        });
-        setOffline(false);
-        setStale(false);
-        const stored = remember(memoryRef.current, next, null);
-        if (
-          stored.sessions[0]?.label !==
-          memoryRef.current.sessions.find((item) => item.sessionId === next.id)?.label
-        ) {
-          memoryRef.current = stored;
-          commitPhoneMemory(stored);
-        }
-      } catch (caught) {
-        if (stopped) return;
-        if (caught instanceof ApiError && caught.status !== 0) return;
-        setOffline(true);
-        setStale(true);
-      }
+    async function catchUp() {
+      const auth = memoryRef.current.sessions.find((item) => item.sessionId === sessionId);
+      if (!auth) return;
+      const next = await requestJson<SessionView>(`/api/sessions/${sessionId}`, {
+        headers: deviceHeaders(auth),
+      });
+      setSession((current) => {
+        if (!current || current.id !== next.id) return next;
+        if (next.version < current.version) return current;
+        return next;
+      });
     }
 
-    const timer = setInterval(() => void poll(), 2000);
+    async function connect() {
+      const auth = memoryRef.current.sessions.find((item) => item.sessionId === sessionId);
+      if (!auth || stopped) return;
+      try {
+        if (attempt > 0) await catchUp();
+        attempt += 1;
+        const response = await fetch(`/api/sessions/${sessionId}/live`, {
+          headers: deviceHeaders(auth),
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) throw new ApiError("The live sheet stopped", response.status);
+        if (stopped) return;
+        setOffline(false);
+        setStale(false);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!stopped) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() ?? "";
+          for (const part of parts) {
+            const line = part.split("\n").find((item) => item.startsWith("data: "));
+            if (!line) continue;
+            const event = JSON.parse(line.slice(6)) as Parameters<typeof applyLive>[1];
+            setSession((current) => (current && current.id === sessionId ? applyLive(current, event) : current));
+          }
+        }
+      } catch (caught) {
+        if (stopped || (caught instanceof DOMException && caught.name === "AbortError")) return;
+        setOffline(true);
+        setStale(true);
+      }
+      if (!stopped) retry = window.setTimeout(() => void connect(), 1000);
+    }
+
+    void connect();
     return () => {
       stopped = true;
-      clearInterval(timer);
+      controller.abort();
+      window.clearTimeout(retry);
     };
   }, [sessionId]);
 
@@ -283,7 +302,7 @@ export function ScoreApp({ initialJoinCode }: { initialJoinCode?: string }) {
     joinCode: session?.joinCode ?? remembered?.joinCode ?? null,
   };
   const writesEnabled = Boolean(session) && !stale && !offline;
-  const showHand = Boolean(session && session.players.length >= 2 && session.role !== "watch");
+  const showHand = Boolean(session && session.players.length >= 2);
 
   function askForNewSession() {
     if (session) {
