@@ -30,3 +30,29 @@ npm run lint
 npm run build
 npm start
 ```
+
+## NixOS
+
+This repo ships the package and the systemd service. Your NixOS configuration turns it on.
+
+Add the flake as an input:
+
+```nix
+inputs.rummy.url = "github:Adhias/rummy";
+```
+
+Import the module and enable the service:
+
+```nix
+rummy.nixosModules.default
+{
+  services.points-rummy = {
+    enable = true;
+    port = 3000;
+    # Listens on localhost until you put a reverse proxy in front, or set
+    # host = "0.0.0.0" and openFirewall = true.
+  };
+}
+```
+
+The database is kept in `/var/lib/points-rummy`. A reverse proxy, a domain name, and TLS stay in the NixOS configuration.

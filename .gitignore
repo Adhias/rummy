@@ -43,3 +43,7 @@ next-env.d.ts
 # session database
 /data/*.sqlite
 /data/*.sqlite-*
+
+# nix
+result
+result-*
