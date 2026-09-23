@@ -342,7 +342,7 @@ test("a seat write changes only that seat, and a stale write is refused", () => 
   expect(boView.games).toEqual([]);
 });
 
-test("the hand is saved only when every seat has a score and the admin set a winner", () => {
+test("the hand is saved only when every other seat has a score and the admin set a winner", () => {
   const { id, seats, adminAuth, session, joinCode } = table(["Anu", "Bo"]);
   const anuOnly = setSeatPoints(id, auth(seats[0]!.seatCode), { version: session.version, points: 0 });
   const withWinner = setWinner(id, adminAuth, {
@@ -350,7 +350,7 @@ test("the hand is saved only when every seat has a score and the admin set a win
     winnerPlayerId: seats[0]!.playerId,
     winnerPoints: null,
   });
-  expect(() => saveOpenHand(id, adminAuth, withWinner.version)).toThrow(/every player/i);
+  expect(() => saveOpenHand(id, adminAuth, withWinner.version)).toThrow(/other player/i);
 
   expect(() =>
     setWinner(id, auth(seats[1]!.seatCode), {
@@ -366,7 +366,8 @@ test("the hand is saved only when every seat has a score and the admin set a win
   expect(watcher.openHand.scores).toEqual([]);
   expect(watcher.players).toHaveLength(2);
 
-  const saved = finishHand(id, seats, adminAuth, { Anu: 0, Bo: 40 }, "Anu", withWinner.version);
+  const bo = setSeatPoints(id, auth(seats[1]!.seatCode), { version: withWinner.version, points: 40 });
+  const saved = saveOpenHand(id, adminAuth, bo.version);
   expect(saved.games).toHaveLength(1);
   expect(saved.openHand.scores).toEqual([]);
   expect(saved.rosterOpen).toBe(false);
@@ -378,6 +379,57 @@ test("the hand is saved only when every seat has a score and the admin set a win
   expect(watching.games[0]?.money).toBe(40);
   expect(watching.players.map((player) => player.total)).toEqual([-40, 40]);
   expect(watching.openHand.scores).toEqual([]);
+});
+
+test("the winner does not enter points, including when the admin won", () => {
+  const { id, seats, adminAuth, session } = table(["Anu", "Bo", "Chitra"]);
+  const picked = setWinner(id, adminAuth, {
+    version: session.version,
+    winnerPlayerId: seats[0]!.playerId,
+    winnerPoints: null,
+  });
+  const winnerPhone = viewSession(id, auth(seats[0]!.seatCode));
+  expect(winnerPhone.role).toBe("admin");
+  expect(winnerPhone.openHand.winnerPlayerId).toBe(seats[0]!.playerId);
+  expect(winnerPhone.openHand.scores).toEqual([]);
+
+  expect(() =>
+    setSeatPoints(id, auth(seats[0]!.seatCode), { version: picked.version, points: 12 }),
+  ).toThrow(/winner does not enter/i);
+  expect(() => saveOpenHand(id, adminAuth, picked.version)).toThrow(/other player/i);
+
+  const bo = setSeatPoints(id, auth(seats[1]!.seatCode), { version: picked.version, points: 20 });
+  const chitra = setSeatPoints(id, auth(seats[2]!.seatCode), { version: bo.version, points: 66 });
+  const saved = saveOpenHand(id, adminAuth, chitra.version);
+  expect(saved.games[0]?.scores).toEqual([
+    { playerId: seats[0]!.playerId, points: -90 },
+    { playerId: seats[1]!.playerId, points: 20 },
+    { playerId: seats[2]!.playerId, points: 70 },
+  ]);
+  expect(saved.games[0]?.money).toBe(90);
+});
+
+test("a winner who is not the admin is exempt, and an earlier score is not kept", () => {
+  const { id, seats, adminAuth, session } = table(["Anu", "Bo"]);
+  const anu = setSeatPoints(id, auth(seats[0]!.seatCode), { version: session.version, points: 15 });
+  const bo = setSeatPoints(id, auth(seats[1]!.seatCode), { version: anu.version, points: 20 });
+  const picked = setWinner(id, adminAuth, {
+    version: bo.version,
+    winnerPlayerId: seats[1]!.playerId,
+    winnerPoints: null,
+  });
+  const boPhone = viewSession(id, auth(seats[1]!.seatCode));
+  expect(boPhone.role).toBe("seat");
+  expect(boPhone.openHand.winnerPlayerId).toBe(seats[1]!.playerId);
+  expect(boPhone.openHand.scores).toEqual([]);
+  expect(boPhone.openHand.winnerPoints).toBeNull();
+
+  const saved = saveOpenHand(id, adminAuth, picked.version);
+  expect(saved.games[0]?.scores).toEqual([
+    { playerId: seats[0]!.playerId, points: 20 },
+    { playerId: seats[1]!.playerId, points: -20 },
+  ]);
+  expect(saved.games[0]?.money).toBe(20);
 });
 
 test("scoring stays closed until two names exist", () => {

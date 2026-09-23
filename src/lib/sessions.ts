@@ -180,9 +180,10 @@ function joinMatches(session: SessionDetail, auth: DeviceAuth): boolean {
 function visibleOpenHand(role: PhoneRole, playerId: string | null, openHand: OpenHand): OpenHand {
   if (role === "admin") return openHand;
   if (role === "seat" && playerId) {
+    const won = openHand.winnerPlayerId === playerId;
     return {
-      scores: openHand.scores.filter((score) => score.playerId === playerId),
-      winnerPlayerId: null,
+      scores: won ? [] : openHand.scores.filter((score) => score.playerId === playerId),
+      winnerPlayerId: won ? playerId : null,
       winnerPoints: null,
       winnerOverridden: false,
     };
@@ -421,6 +422,10 @@ export function setSeatPoints(
 
   const write = db.transaction(() => {
     bump(sessionId, version);
+    const openHand = loadOpenHand(sessionId);
+    if (openHand.winnerPlayerId === seat.id) {
+      throw new AppError("The winner does not enter points");
+    }
     db.prepare(
       `INSERT INTO open_hand_scores (session_id, player_id, points) VALUES (?, ?, ?)
        ON CONFLICT(session_id, player_id) DO UPDATE SET points = excluded.points`,
@@ -525,10 +530,10 @@ export function saveOpenHand(sessionId: string, auth: DeviceAuth, version: unkno
       throw new AppError("Pick a winner");
     }
     const byPlayer = new Map(openHand.scores.map((score) => [score.playerId, score.points]));
-    if (players.some((player) => !byPlayer.has(player.id))) {
-      throw new AppError("Every player needs a score before the hand can be saved");
-    }
     const winnerPlayerId = openHand.winnerPlayerId;
+    if (players.some((player) => player.id !== winnerPlayerId && !byPlayer.has(player.id))) {
+      throw new AppError("Every other player needs a score before the hand can be saved");
+    }
     const winnerPoints =
       openHand.winnerOverridden && openHand.winnerPoints !== null
         ? openHand.winnerPoints

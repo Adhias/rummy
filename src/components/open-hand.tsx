@@ -187,22 +187,24 @@ export function OpenHand({
         )
       : null;
 
-  const othersReady = session.players
-    .filter((player) => player.id !== session.playerId)
-    .every((player) => serverScores.has(player.id));
-  const canSave = writesEnabled && mineReady && othersReady && activeWinnerId !== null && !saving;
+  const iAmWinner = session.playerId !== null && activeWinnerId === session.playerId;
+  const losersReady = session.players
+    .filter((player) => player.id !== activeWinnerId)
+    .every((player) => (player.id === session.playerId ? mineReady : serverScores.has(player.id)));
+  const canSave =
+    session.role === "admin" && writesEnabled && activeWinnerId !== null && losersReady && !saving;
   const scoreHeld = held;
   const winnerHeld = winnerPending && winnerVersion !== null && winnerVersion !== session.version;
   const me = session.players.find((player) => player.id === session.playerId) ?? null;
 
   async function saveHand() {
-    if (!canSave || !activeWinnerId || busy.current || parsedMine === null) return;
+    if (!canSave || !activeWinnerId || busy.current) return;
     busy.current = true;
     setSaving(true);
     setError(null);
     try {
       let version = session.version;
-      if (dirty) {
+      if (dirty && !iAmWinner) {
         const scored = await sendScore(version);
         if (!scored) return;
         version = scored.version;
@@ -272,6 +274,14 @@ export function OpenHand({
         {session.players.map((player) => {
           if (player.id !== session.playerId) {
             if (session.role !== "admin") return null;
+            if (player.id === activeWinnerId) {
+              return (
+                <div key={player.id} className="rounded-2xl border border-[#e4dccb] bg-[#fbf8f2] p-3">
+                  <p className="text-base font-medium">{player.name}</p>
+                  <p className="mt-1 text-sm text-[#5e584e]">Winner. This seat does not enter points.</p>
+                </div>
+              );
+            }
             const raw = serverScores.get(player.id);
             const stored = raw === undefined ? null : roundLoserPoints(raw);
             const waiting = raw === undefined;
@@ -288,6 +298,15 @@ export function OpenHand({
                     )}
                   </>
                 )}
+              </div>
+            );
+          }
+
+          if (iAmWinner) {
+            return (
+              <div key={player.id} className="rounded-2xl border border-[#e4dccb] bg-[#fbf8f2] p-3">
+                <p className="text-base font-medium">You won</p>
+                <p className="mt-1 text-sm text-[#5e584e]">This seat does not enter points.</p>
               </div>
             );
           }
@@ -417,6 +436,8 @@ export function OpenHand({
             <Button type="button" size="xl" className="w-full" disabled={!canSave} onClick={() => void saveHand()}>
               {saving ? "Saving…" : scoreHeld || winnerHeld ? "Save this hand" : "Save hand"}
             </Button>
+          ) : iAmWinner ? (
+            <p className="py-3 text-center text-sm text-[#5e584e]">This seat does not enter points.</p>
           ) : (
             <Button
               type="button"
