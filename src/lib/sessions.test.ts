@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { POST as saveHandRoute } from "@/app/api/sessions/[id]/open-hand/route";
 import { resetDb } from "@/lib/db";
 import { applyLive, subscribe, type LiveEvent } from "@/lib/live";
+import { setSheetWriter, type SheetRow } from "@/lib/sheets";
 import { DEFAULT_POINT_VALUE, DOUBLE_PACK_POINTS, FULL_COUNT_POINTS, PACK_POINTS } from "@/lib/scoring";
 import {
   addPlayer,
@@ -30,6 +32,7 @@ beforeEach(() => {
 
 afterEach(() => {
   resetDb();
+  setSheetWriter(null);
 });
 
 type Seat = { name: string; playerId: string; seatCode: string };
@@ -525,6 +528,32 @@ test("the admin can override the declared winner's points and cannot pick the se
     { playerId: seats[1]!.playerId, points: -5 },
   ]);
   expect(saved.games[0]?.money).toBe(20);
+});
+
+test("admin save appends one sheet row and interim choices do not", async () => {
+  const rows: SheetRow[] = [];
+  setSheetWriter((row) => {
+    rows.push(row);
+  });
+  const { id, seats, session, joinCode } = table(["Cara", "Anu"]);
+  const loss = setSeatPoints(id, auth(seats[0]!.seatCode), { version: session.version, points: 40 });
+  const declared = declareWinner(id, auth(seats[1]!.seatCode), loss.version);
+  expect(rows).toEqual([]);
+
+  const response = await saveHandRoute(
+    new Request("http://localhost/api/sessions/x/open-hand", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-seat-code": seats[0]!.seatCode,
+        "x-join-code": joinCode,
+      },
+      body: JSON.stringify({ version: declared.version }),
+    }),
+    { params: Promise.resolve({ id }) },
+  );
+  expect(response.status).toBe(200);
+  expect(rows).toEqual([[40, -40, "Anu", 40]]);
 });
 
 test("scoring stays closed until two names exist", () => {
