@@ -29,13 +29,6 @@
         points-rummy = prev.callPackage ./package.nix { };
       };
 
-      nixosModules.default =
-        { ... }:
-        {
-          imports = [ ./module.nix ];
-          nixpkgs.overlays = [ self.overlays.default ];
-        };
-
       devShells = forAllSystems (
         system:
         let

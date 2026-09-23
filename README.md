@@ -44,7 +44,7 @@ npm run build
 
 ## NixOS
 
-The flake follows the usual nixpkgs split. `package.nix` is the derivation, `callPackage`d as `packages.points-rummy`. `module.nix` is the NixOS module. `flake.nix` exports those plus an overlay and a dev shell.
+This flake ships the package, not a service. `package.nix` is the derivation, `callPackage`d as `packages.points-rummy` and re-exported as `packages.default`. `flake.nix` also exports an overlay and a dev shell. The systemd unit, database path, reverse proxy, and TLS live in the NixOS configuration that consumes this flake.
 
 Add the flake as an input:
 
@@ -52,22 +52,27 @@ Add the flake as an input:
 inputs.rummy.url = "github:Adhias/rummy";
 ```
 
-Import the module and enable the service:
+Run the package under systemd from your own configuration. `points-rummy` reads `HOSTNAME`, `PORT`, and `RUMMY_DB_PATH`:
 
 ```nix
-imports = [ rummy.nixosModules.default ];
-
-services.points-rummy = {
-  enable = true;
-  port = 3000;
-  # Listens on localhost until you put a reverse proxy in front, or set
-  # host = "0.0.0.0" and openFirewall = true.
+systemd.services.points-rummy = {
+  wantedBy = [ "multi-user.target" ];
+  after = [ "network.target" ];
+  environment = {
+    HOSTNAME = "127.0.0.1";
+    PORT = "3000";
+    RUMMY_DB_PATH = "/var/lib/points-rummy/rummy.sqlite";
+  };
+  serviceConfig = {
+    ExecStart = "${inputs.rummy.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/points-rummy";
+    StateDirectory = "points-rummy";
+    WorkingDirectory = "/var/lib/points-rummy";
+    DynamicUser = true;
+  };
 };
 ```
 
-Importing the module adds `overlays.default`, which defines `pkgs.points-rummy`. The service runs that package under systemd with `DynamicUser` and keeps the database in `/var/lib/points-rummy`. A reverse proxy, a domain name, and TLS stay in the NixOS configuration.
-
-To install the package without the service, add the overlay yourself:
+To install the package without a service, add the overlay:
 
 ```nix
 nixpkgs.overlays = [ rummy.overlays.default ];
