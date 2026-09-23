@@ -17,17 +17,40 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          points-rummy = pkgs.callPackage ./package.nix { };
         in
         {
-          default = pkgs.callPackage ./nix/package.nix { src = ./.; };
+          inherit points-rummy;
+          default = points-rummy;
         }
       );
 
+      overlays.default = final: prev: {
+        points-rummy = prev.callPackage ./package.nix { };
+      };
+
       nixosModules.default =
-        { pkgs, lib, ... }:
+        { ... }:
         {
-          imports = [ ./nix/module.nix ];
-          services.points-rummy.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          imports = [ ./module.nix ];
+          nixpkgs.overlays = [ self.overlays.default ];
         };
+
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          default = pkgs.mkShell {
+            packages = [
+              pkgs.nodejs_22
+              pkgs.python3
+              pkgs.pkg-config
+              pkgs.sqlite
+            ];
+          };
+        }
+      );
     };
 }

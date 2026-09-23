@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 let
@@ -11,10 +12,7 @@ in
   options.services.points-rummy = {
     enable = lib.mkEnableOption "Points Rummy score sheet";
 
-    package = lib.mkOption {
-      type = lib.types.package;
-      description = "Points Rummy package to run.";
-    };
+    package = lib.mkPackageOption pkgs "points-rummy" { };
 
     host = lib.mkOption {
       type = lib.types.str;

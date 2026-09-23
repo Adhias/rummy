@@ -1,7 +1,6 @@
 {
   lib,
   stdenv,
-  src,
   buildNpmPackage,
   nodejs_22,
   python3,
@@ -17,16 +16,16 @@ let
 in
 build {
   pname = "points-rummy";
-  version = "0.1.0";
+  version = (lib.importJSON ./package.json).version;
 
   src = lib.cleanSourceWith {
-    src = lib.cleanSource src;
+    src = lib.cleanSource ./.;
     filter =
       name: _type:
       let
         base = baseNameOf name;
       in
-      base != "node_modules" && base != ".next" && base != "data" && base != "result";
+      base != "node_modules" && base != ".next" && base != "data";
   };
 
   npmDepsHash = "sha256-knd7sAWt+/JwhA2RYyq70AFTXFyOZn/ByiNUTtGwUZY=";
@@ -71,6 +70,7 @@ build {
 
   meta = {
     description = "Phone-friendly score sheet for Points Rummy";
+    homepage = "https://github.com/Adhias/rummy";
     mainProgram = "points-rummy";
     platforms = lib.platforms.linux;
   };

@@ -13,27 +13,38 @@ This tracks Points Rummy only. It does not deal cards, and it does not score Poo
 - The rupees owed on a game are the opponents' stored points added together, times the rupee value. An overridden winner score does not change that amount.
 - Number cards count as their face value. Jacks, queens, kings, and aces are 10. Jokers are 0. The card counter can drop that total into a loser's field.
 
-## Run
+## Setup
+
+With Nix, enter a shell that has the Node.js version the package builds with:
+
+```bash
+nix develop
+npm ci
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+`nix develop` provides Node.js 22, Python, pkg-config, and SQLite. `npm ci` installs the JavaScript dependencies into `node_modules` for local development. Sessions, players, and games are stored in SQLite at `data/rummy.sqlite`. Refreshing or coming back later keeps the sheet. Past sessions stay in the list.
+
+The same commands work without Nix, using whatever Node.js is already installed:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
-
-Sessions, players, and games are stored in SQLite at `data/rummy.sqlite`. Refreshing or coming back later keeps the sheet. Past sessions stay in the list.
-
 ```bash
 npm test
 npm run lint
 npm run build
-npm start
 ```
+
+`nix build` produces the production server, and `nix run` starts it. It listens on port 3000. `RUMMY_DB_PATH` chooses the SQLite file.
 
 ## NixOS
 
-This repo ships the package and the systemd service. Your NixOS configuration turns it on.
+The flake follows the usual nixpkgs split. `package.nix` is the derivation, `callPackage`d as `packages.points-rummy`. `module.nix` is the NixOS module. `flake.nix` exports those plus an overlay and a dev shell.
 
 Add the flake as an input:
 
@@ -44,15 +55,21 @@ inputs.rummy.url = "github:Adhias/rummy";
 Import the module and enable the service:
 
 ```nix
-rummy.nixosModules.default
-{
-  services.points-rummy = {
-    enable = true;
-    port = 3000;
-    # Listens on localhost until you put a reverse proxy in front, or set
-    # host = "0.0.0.0" and openFirewall = true.
-  };
-}
+imports = [ rummy.nixosModules.default ];
+
+services.points-rummy = {
+  enable = true;
+  port = 3000;
+  # Listens on localhost until you put a reverse proxy in front, or set
+  # host = "0.0.0.0" and openFirewall = true.
+};
 ```
 
-The database is kept in `/var/lib/points-rummy`. A reverse proxy, a domain name, and TLS stay in the NixOS configuration.
+Importing the module adds `overlays.default`, which defines `pkgs.points-rummy`. The service runs that package under systemd with `DynamicUser` and keeps the database in `/var/lib/points-rummy`. A reverse proxy, a domain name, and TLS stay in the NixOS configuration.
+
+To install the package without the service, add the overlay yourself:
+
+```nix
+nixpkgs.overlays = [ rummy.overlays.default ];
+environment.systemPackages = [ pkgs.points-rummy ];
+```
