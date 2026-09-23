@@ -4,7 +4,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { resetDb } from "@/lib/db";
-import { DEFAULT_POINT_VALUE } from "@/lib/scoring";
+import { DEFAULT_POINT_VALUE, DOUBLE_PACK_POINTS, FULL_COUNT_POINTS, PACK_POINTS } from "@/lib/scoring";
 import {
   addPlayer,
   createSession,
@@ -342,6 +342,32 @@ test("a seat write changes only that seat, and a stale write is refused", () => 
   expect(boView.openHand.scores).toEqual([{ playerId: seats[1]!.playerId, points: 66 }]);
   expect(boView.openHand.winnerPlayerId).toBeNull();
   expect(boView.games).toEqual([]);
+});
+
+test("a later choice replaces the earlier one and does not save the hand", () => {
+  const { id, seats, adminAuth, session } = table(["Anu", "Bo"]);
+  const twelve = setSeatPoints(id, auth(seats[0]!.seatCode), { version: session.version, points: 12 });
+  const pack = setSeatPoints(id, auth(seats[0]!.seatCode), { version: twelve.version, points: PACK_POINTS });
+  expect(viewSession(id, adminAuth).openHand.scores).toEqual([{ playerId: seats[0]!.playerId, points: 20 }]);
+
+  const declared = declareWinner(id, auth(seats[0]!.seatCode), pack.version);
+  expect(declared.openHand.winnerPlayerId).toBe(seats[0]!.playerId);
+  expect(declared.openHand.scores).toEqual([]);
+
+  const doubled = setSeatPoints(id, auth(seats[0]!.seatCode), {
+    version: declared.version,
+    points: DOUBLE_PACK_POINTS,
+  });
+  expect(doubled.openHand.winnerPlayerId).toBeNull();
+  expect(doubled.openHand.scores).toEqual([{ playerId: seats[0]!.playerId, points: 40 }]);
+
+  const full = setSeatPoints(id, auth(seats[0]!.seatCode), {
+    version: doubled.version,
+    points: FULL_COUNT_POINTS,
+  });
+  expect(full.games).toEqual([]);
+  expect(full.openHand.scores).toEqual([{ playerId: seats[0]!.playerId, points: 80 }]);
+  expect(() => saveOpenHand(id, adminAuth, full.version)).toThrow(/declare/i);
 });
 
 test("the hand is saved when one seat has declared and every other seat has a loss", () => {

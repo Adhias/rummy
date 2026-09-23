@@ -495,7 +495,7 @@ export function ScoreApp({ initialJoinCode }: { initialJoinCode?: string }) {
               auth={auth}
               canEdit={session.role === "admin"}
               writesEnabled={writesEnabled}
-              hasBar={showHand}
+              hasBar={showHand && session.role === "admin"}
               onEdit={(game) => {
                 setEditing(game);
                 setMode("edit");

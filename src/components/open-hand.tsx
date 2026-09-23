@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { requestJson } from "@/components/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ApiError, requestJson } from "@/components/api";
 import { CardCounter } from "@/components/card-counter";
 import { deviceHeaders, type DeviceHeaders } from "@/components/device-memory";
 import { Button } from "@/components/ui/button";
@@ -43,36 +43,43 @@ export function OpenHand({
 }) {
   const mine = session.openHand.scores.find((score) => score.playerId === session.playerId);
   const serverText = mine ? String(mine.points) : "";
-  const [text, setText] = useState(serverText);
-  const [dirty, setDirty] = useState(false);
-  const [draftVersion, setDraftVersion] = useState<number | null>(null);
+  const [text, setText] = useState<string | null>(null);
   const [pointsText, setPointsText] = useState("");
   const [pointsPending, setPointsPending] = useState(false);
   const [counterOpen, setCounterOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const busy = useRef(false);
-  const shownText = dirty ? text : serverText;
+  const shownText = text ?? serverText;
   const parsedMine = parsePoints(shownText);
-  const mineReady = parsedMine !== null && parsedMine >= 0;
-  const held = dirty && draftVersion !== null && draftVersion !== session.version;
   const winnerId = session.openHand.winnerPlayerId;
   const iAmWinner = session.playerId !== null && winnerId === session.playerId;
   const declaredBy = session.players.find((player) => player.id === winnerId) ?? null;
+  const textRef = useRef<string | null>(null);
+  const versionRef = useRef(session.version);
+  const known = useRef({
+    version: session.version,
+    points: mine?.points ?? null,
+    winner: winnerId,
+  });
+  const tail = useRef(Promise.resolve());
+
+  useEffect(() => {
+    if (session.version < versionRef.current) return;
+    versionRef.current = session.version;
+    known.current = {
+      version: session.version,
+      points: mine?.points ?? null,
+      winner: session.openHand.winnerPlayerId,
+    };
+  }, [mine?.points, session.openHand.winnerPlayerId, session.version]);
 
   const serverScores = useMemo(() => {
     return new Map(session.openHand.scores.map((score) => [score.playerId, score.points]));
   }, [session.openHand.scores]);
 
-  function edit(value: string) {
+  function show(value: string | null) {
+    textRef.current = value;
     setText(value);
-    if (value === serverText) {
-      setDirty(false);
-      setDraftVersion(null);
-      return;
-    }
-    setDirty(true);
-    setDraftVersion((current) => (current === null ? session.version : current));
   }
 
   function fail(caught: unknown) {
@@ -80,94 +87,87 @@ export function OpenHand({
     setError(caught instanceof Error ? caught.message : "Could not save");
   }
 
-  function clearLossDraft() {
-    setText("");
-    setDirty(false);
-    setDraftVersion(null);
-  }
-
-  async function sendScore(version: number): Promise<SessionView | null> {
-    if (!mineReady || parsedMine === null) {
-      setError("Enter a score of 0 or more");
-      return null;
-    }
-    const next = await requestJson<SessionView>(`/api/sessions/${session.id}/open-hand/score`, {
-      method: "PUT",
-      headers: deviceHeaders(auth),
-      body: JSON.stringify({ version, points: parsedMine }),
+  function runQueued(task: () => Promise<void>) {
+    const run = tail.current.then(task).catch((caught: unknown) => {
+      fail(caught);
     });
-    setDirty(false);
-    setDraftVersion(null);
-    onSession(next);
-    return next;
+    tail.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
   }
 
-  async function sendOverride(version: number, winnerPoints: number | null): Promise<SessionView | null> {
-    const next = await requestJson<SessionView>(`/api/sessions/${session.id}/open-hand/winner/points`, {
-      method: "PUT",
-      headers: deviceHeaders(auth),
-      body: JSON.stringify({ version, winnerPoints }),
+  async function writeJson(url: string, method: string, body: Record<string, unknown>) {
+    const send = (version: number) =>
+      requestJson<SessionView>(url, {
+        method,
+        headers: deviceHeaders(auth),
+        body: JSON.stringify({ ...body, version }),
+      });
+    try {
+      return await send(versionRef.current);
+    } catch (caught) {
+      if (!(caught instanceof ApiError) || caught.status !== 409) throw caught;
+      const fresh = await requestJson<SessionView>(`/api/sessions/${session.id}`, {
+        headers: deviceHeaders(auth),
+      });
+      versionRef.current = fresh.version;
+      onSession(fresh);
+      return await send(fresh.version);
+    }
+  }
+
+  function remember(next: SessionView) {
+    versionRef.current = next.version;
+    const score = next.openHand.scores.find((item) => item.playerId === session.playerId);
+    known.current = {
+      version: next.version,
+      points: score?.points ?? null,
+      winner: next.openHand.winnerPlayerId,
+    };
+    if (textRef.current === null || textRef.current === String(score?.points ?? "")) show(null);
+    onSession(next);
+  }
+
+  function applyLoss(points: number) {
+    show(String(points));
+    if (!writesEnabled || !session.playerId) {
+      setError(offline ? "Offline" : "Checking the sheet…");
+      return;
+    }
+    setError(null);
+    const playerId = session.playerId;
+    runQueued(async () => {
+      if (known.current.points === points && known.current.winner !== playerId) {
+        if (textRef.current === String(points)) show(null);
+        return;
+      }
+      const next = await writeJson(`/api/sessions/${session.id}/open-hand/score`, "PUT", { points });
+      remember(next);
     });
-    setPointsPending(false);
-    setPointsText("");
-    onSession(next);
-    return next;
   }
 
-  async function submitScore() {
-    if (!writesEnabled || busy.current) return;
-    busy.current = true;
-    setSaving(true);
+  function declareSelf() {
+    if (!writesEnabled || !session.playerId || (winnerId !== null && !iAmWinner)) return;
+    show(null);
     setError(null);
-    try {
-      await sendScore(session.version);
-    } catch (caught) {
-      fail(caught);
-    } finally {
-      busy.current = false;
-      setSaving(false);
-    }
+    const playerId = session.playerId;
+    runQueued(async () => {
+      if (known.current.winner === playerId) return;
+      const next = await writeJson(`/api/sessions/${session.id}/open-hand/winner`, "PUT", {});
+      remember(next);
+    });
   }
 
-  async function declareSelf() {
-    if (!writesEnabled || busy.current || !session.playerId || winnerId) return;
-    busy.current = true;
-    setSaving(true);
+  function takeBack() {
+    if (!writesEnabled || !iAmWinner || !session.playerId) return;
     setError(null);
-    try {
-      const next = await requestJson<SessionView>(`/api/sessions/${session.id}/open-hand/winner`, {
-        method: "PUT",
-        headers: deviceHeaders(auth),
-        body: JSON.stringify({ version: session.version }),
-      });
-      clearLossDraft();
-      onSession(next);
-    } catch (caught) {
-      fail(caught);
-    } finally {
-      busy.current = false;
-      setSaving(false);
-    }
-  }
-
-  async function takeBack() {
-    if (!writesEnabled || busy.current || !iAmWinner) return;
-    busy.current = true;
-    setSaving(true);
-    setError(null);
-    try {
-      const next = await requestJson<SessionView>(`/api/sessions/${session.id}/open-hand/winner`, {
-        method: "DELETE",
-        headers: deviceHeaders(auth),
-        body: JSON.stringify({ version: session.version }),
-      });
-      onSession(next);
-    } catch (caught) {
-      fail(caught);
-    } finally {
-      busy.current = false;
-      setSaving(false);
-    }
+    const playerId = session.playerId;
+    runQueued(async () => {
+      if (known.current.winner !== playerId) return;
+      const next = await writeJson(`/api/sessions/${session.id}/open-hand/winner`, "DELETE", {});
+      remember(next);
+    });
   }
 
   const suggestion = useMemo(() => {
@@ -176,14 +176,14 @@ export function OpenHand({
     for (const player of session.players) {
       if (player.id === winnerId) continue;
       const points =
-        player.id === session.playerId && dirty && mineReady && parsedMine !== null
+        player.id === session.playerId && parsedMine !== null && parsedMine >= 0 && !iAmWinner
           ? parsedMine
           : serverScores.get(player.id);
       if (points === undefined) return null;
       raw.push(points);
     }
     return suggestWinnerPoints(raw);
-  }, [dirty, mineReady, parsedMine, serverScores, session.playerId, session.players, winnerId]);
+  }, [iAmWinner, parsedMine, serverScores, session.playerId, session.players, winnerId]);
 
   const shownWinnerPoints = pointsPending
     ? pointsText
@@ -197,7 +197,7 @@ export function OpenHand({
     .filter((player) => player.id !== winnerId)
     .map((player) => {
       const points =
-        player.id === session.playerId && dirty && mineReady && parsedMine !== null
+        player.id === session.playerId && parsedMine !== null && parsedMine >= 0 && !iAmWinner
           ? parsedMine
           : serverScores.get(player.id);
       if (points === undefined) return null;
@@ -211,57 +211,51 @@ export function OpenHand({
         )
       : null;
 
-  const losersReady = session.players
-    .filter((player) => player.id !== winnerId)
-    .every((player) => (player.id === session.playerId ? mineReady : serverScores.has(player.id)));
-  const canSave = session.role === "admin" && writesEnabled && winnerId !== null && losersReady && !saving;
+  const losersReady =
+    winnerId !== null &&
+    session.players.every((player) => player.id === winnerId || serverScores.has(player.id));
+  const canSave = session.role === "admin" && writesEnabled && losersReady && !saving;
   const me = session.players.find((player) => player.id === session.playerId) ?? null;
 
-  async function saveHand() {
-    if (!canSave || !winnerId || busy.current) return;
-    busy.current = true;
+  function saveHand() {
+    if (!canSave || !winnerId) return;
     setSaving(true);
     setError(null);
-    try {
-      let version = session.version;
-      if (dirty && !iAmWinner) {
-        const scored = await sendScore(version);
-        if (!scored) return;
-        version = scored.version;
-      }
-      if (pointsPending) {
-        const winnerPoints = parsePoints(pointsText);
-        if (winnerPoints === null) {
-          setError("Enter the winner's points");
-          return;
+    runQueued(async () => {
+      try {
+        let version = versionRef.current;
+        if (pointsPending) {
+          const winnerPoints = parsePoints(pointsText);
+          if (winnerPoints === null) {
+            setError("Enter the winner's points");
+            return;
+          }
+          const picked = await writeJson(`/api/sessions/${session.id}/open-hand/winner/points`, "PUT", {
+            winnerPoints,
+          });
+          version = picked.version;
+          versionRef.current = version;
+          known.current.version = version;
+          setPointsPending(false);
+          setPointsText("");
+          onSession(picked);
         }
-        const picked = await sendOverride(version, winnerPoints);
-        if (!picked) return;
-        version = picked.version;
+        const saved = await requestJson<SessionView>(`/api/sessions/${session.id}/open-hand`, {
+          method: "POST",
+          headers: deviceHeaders(auth),
+          body: JSON.stringify({ version }),
+        });
+        versionRef.current = saved.version;
+        setPointsPending(false);
+        setPointsText("");
+        show(null);
+        onSession(saved);
+      } finally {
+        setSaving(false);
       }
-      const saved = await requestJson<SessionView>(`/api/sessions/${session.id}/open-hand`, {
-        method: "POST",
-        headers: deviceHeaders(auth),
-        body: JSON.stringify({ version }),
-      });
-      setPointsPending(false);
-      setPointsText("");
-      onSession(saved);
-    } catch (caught) {
-      fail(caught);
-    } finally {
-      busy.current = false;
-      setSaving(false);
-    }
+    });
   }
 
-  const sendLabel = !writesEnabled
-    ? offline
-      ? "Offline"
-      : "Checking the sheet…"
-    : held
-      ? "Send these points"
-      : "Send points";
   const declareBlocked = winnerId !== null && !iAmWinner;
 
   return (
@@ -298,7 +292,7 @@ export function OpenHand({
             );
           }
 
-          const stored = mineReady && parsedMine !== null ? roundLoserPoints(parsedMine) : null;
+          const stored = parsedMine !== null && parsedMine >= 0 ? roundLoserPoints(parsedMine) : null;
           return (
             <div key={player.id} className="rounded-2xl border border-[#e4dccb] bg-[#fbf8f2] p-3">
               {iAmWinner && (
@@ -313,7 +307,19 @@ export function OpenHand({
                 id="my-points"
                 inputMode="numeric"
                 value={shownText}
-                onChange={(event) => edit(event.target.value)}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value.trim() === "") {
+                    show(null);
+                    return;
+                  }
+                  const parsed = parsePoints(value);
+                  if (parsed !== null && parsed >= 0) {
+                    applyLoss(parsed);
+                    return;
+                  }
+                  show(value);
+                }}
                 className="mt-2 h-14 text-2xl tabular-nums"
                 placeholder="Points"
               />
@@ -325,7 +331,7 @@ export function OpenHand({
                     variant={shownText === String(preset.points) ? "default" : "outline"}
                     aria-label={preset.aria}
                     className="h-16 flex-col gap-0 px-1 text-xs leading-tight whitespace-normal"
-                    onClick={() => edit(String(preset.points))}
+                    onClick={() => applyLoss(preset.points)}
                   >
                     <span>{preset.label}</span>
                     <span className="text-base tabular-nums">{preset.points}</span>
@@ -341,24 +347,13 @@ export function OpenHand({
               {parsedMine !== null && parsedMine < 0 && (
                 <p className="mt-1 text-sm text-destructive">Enter 0 or more</p>
               )}
-              {session.role === "admin" && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="mt-3 h-12 w-full"
-                  disabled={!writesEnabled || !mineReady || saving || !dirty}
-                  onClick={() => void submitScore()}
-                >
-                  {sendLabel}
-                </Button>
-              )}
               {iAmWinner ? (
                 <Button
                   type="button"
                   variant="outline"
                   className="mt-3 h-12 w-full"
-                  disabled={!writesEnabled || saving}
-                  onClick={() => void takeBack()}
+                  disabled={!writesEnabled}
+                  onClick={() => takeBack()}
                 >
                   Take it back
                 </Button>
@@ -366,8 +361,8 @@ export function OpenHand({
                 <Button
                   type="button"
                   className="mt-3 h-12 w-full"
-                  disabled={!writesEnabled || saving || declareBlocked}
-                  onClick={() => void declareSelf()}
+                  disabled={!writesEnabled || declareBlocked}
+                  onClick={() => declareSelf()}
                 >
                   I won
                 </Button>
@@ -410,15 +405,15 @@ export function OpenHand({
               onClick={() => {
                 setPointsPending(false);
                 setPointsText("");
-                if (!winnerId || !writesEnabled || busy.current) return;
-                busy.current = true;
-                setSaving(true);
-                void sendOverride(session.version, null)
-                  .catch((caught) => fail(caught))
-                  .finally(() => {
-                    busy.current = false;
-                    setSaving(false);
+                if (!winnerId || !writesEnabled) return;
+                runQueued(async () => {
+                  const next = await writeJson(`/api/sessions/${session.id}/open-hand/winner/points`, "PUT", {
+                    winnerPoints: null,
                   });
+                  versionRef.current = next.version;
+                  known.current.version = next.version;
+                  onSession(next);
+                });
               }}
             >
               Use calculated
@@ -432,44 +427,29 @@ export function OpenHand({
         </div>
       )}
 
-      {held && (
-        <p className="mt-4 text-sm text-[#5e584e]">
-          The sheet changed. What you typed stays here until you send it.
-        </p>
-      )}
       {error && (
         <p role="alert" className="mt-4 text-sm text-destructive">
           {error}
         </p>
       )}
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-[#e4dccb] bg-[#f7f3ea]/95 px-4 py-3 backdrop-blur pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <div className="mx-auto max-w-5xl">
-          {session.role === "admin" ? (
-            <Button type="button" size="xl" className="w-full" disabled={!canSave} onClick={() => void saveHand()}>
-              {saving ? "Saving…" : held ? "Save this hand" : "Save hand"}
+      {session.role === "admin" && (
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-[#e4dccb] bg-[#f7f3ea]/95 px-4 py-3 backdrop-blur pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="mx-auto max-w-5xl">
+            <Button type="button" size="xl" className="w-full" disabled={!canSave} onClick={() => saveHand()}>
+              {saving ? "Saving…" : "Save hand"}
             </Button>
-          ) : (
-            <Button
-              type="button"
-              size="xl"
-              className="w-full"
-              disabled={!writesEnabled || !mineReady || saving || !dirty}
-              onClick={() => void submitScore()}
-            >
-              {saving ? "Sending…" : sendLabel}
-            </Button>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       <CardCounter
         open={counterOpen}
         playerName={me?.name ?? "your"}
         onOpenChange={setCounterOpen}
         onUse={(total) => {
-          edit(String(total));
           setCounterOpen(false);
+          applyLoss(total);
         }}
       />
     </div>
